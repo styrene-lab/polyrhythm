@@ -47,6 +47,7 @@
               pkg-config
               alsa-lib
               qpwgraph
+              python3
             ];
 
             shellHook = ''

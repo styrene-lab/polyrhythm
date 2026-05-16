@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_STATE_DIR: &str = ".cache/polyrhythm";
 const DEFAULT_SINK: &str = "alsa_output.pci-0000_0e_00.4.analog-stereo";
+const DEFAULT_SAFETY_BUS: &str = "TD50-Safety-Bus";
 const DEFAULT_MIDI_SOURCE: &str = "Midi-Bridge:TD50-DrumGizmo-Hihat-Mapperout (capture)";
 const DEFAULT_MIDI_TARGET: &str = "DrumGizmo:drumgizmo_midiin";
 
@@ -241,18 +242,36 @@ pub fn check(snapshot: &GraphSnapshot, desired: DesiredState) -> Vec<String> {
             failures.extend(summary.suspicious);
         }
         DesiredState::OverheadMonitor => {
-            let required = [
-                format!("DrumGizmo:5-OHL -> {DEFAULT_SINK}:playback_FL"),
-                format!("DrumGizmo:6-OHR -> {DEFAULT_SINK}:playback_FR"),
+            let required_drum_to_bus = [
+                format!("DrumGizmo:5-OHL -> {DEFAULT_SAFETY_BUS}:playback_FL"),
+                format!("DrumGizmo:6-OHR -> {DEFAULT_SAFETY_BUS}:playback_FR"),
             ];
-            for route in required {
+            for route in required_drum_to_bus {
+                if !summary
+                    .drumgizmo_audio_connections
+                    .iter()
+                    .any(|input| input == &route)
+                {
+                    failures.push(format!("missing overhead safety-bus route: {route}"));
+                }
+            }
+            let required_bus_to_sink = [
+                format!("{DEFAULT_SAFETY_BUS}.monitor:capture_FL -> {DEFAULT_SINK}:playback_FL"),
+                format!("{DEFAULT_SAFETY_BUS}.monitor:capture_FR -> {DEFAULT_SINK}:playback_FR"),
+            ];
+            for route in required_bus_to_sink {
                 if !summary.sink_inputs.iter().any(|input| input == &route) {
-                    failures.push(format!("missing overhead monitor route: {route}"));
+                    failures.push(format!("missing safety-bus monitor route: {route}"));
                 }
             }
             for route in &summary.drumgizmo_audio_connections {
-                if !route.starts_with("DrumGizmo:5-OHL") && !route.starts_with("DrumGizmo:6-OHR") {
+                if !route.starts_with("DrumGizmo:5-OHL -> TD50-Safety-Bus:")
+                    && !route.starts_with("DrumGizmo:6-OHR -> TD50-Safety-Bus:")
+                {
                     failures.push(format!("unexpected DrumGizmo monitor route: {route}"));
+                }
+                if route.contains(&format!("-> {DEFAULT_SINK}:")) {
+                    failures.push(format!("unsafe direct DrumGizmo sink route: {route}"));
                 }
             }
         }

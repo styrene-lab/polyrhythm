@@ -1,6 +1,7 @@
 use std::process::{Command, Stdio};
 
 const DEFAULT_SINK: &str = "alsa_output.pci-0000_0e_00.4.analog-stereo";
+const DEFAULT_SAFETY_BUS: &str = "TD50-Safety-Bus";
 const OVERHEAD_LEFT: &str = "DrumGizmo:5-OHL";
 const OVERHEAD_RIGHT: &str = "DrumGizmo:6-OHR";
 const PLAYBACK_LEFT: &str = "playback_FL";
@@ -28,10 +29,18 @@ pub fn plan(pair: MonitorPair, sink: &str) -> Vec<MonitorOp> {
         MonitorPair::Overheads => vec![
             MonitorOp {
                 source: OVERHEAD_LEFT.to_string(),
-                target: format!("{sink}:{PLAYBACK_LEFT}"),
+                target: format!("{DEFAULT_SAFETY_BUS}:{PLAYBACK_LEFT}"),
             },
             MonitorOp {
                 source: OVERHEAD_RIGHT.to_string(),
+                target: format!("{DEFAULT_SAFETY_BUS}:{PLAYBACK_RIGHT}"),
+            },
+            MonitorOp {
+                source: format!("{DEFAULT_SAFETY_BUS}.monitor:capture_FL"),
+                target: format!("{sink}:{PLAYBACK_LEFT}"),
+            },
+            MonitorOp {
+                source: format!("{DEFAULT_SAFETY_BUS}.monitor:capture_FR"),
                 target: format!("{sink}:{PLAYBACK_RIGHT}"),
             },
         ],
@@ -80,12 +89,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn overhead_plan_is_two_stereo_links() {
+    fn overhead_plan_routes_through_safety_bus() {
         let ops = plan(MonitorPair::Overheads, DEFAULT_SINK);
-        assert_eq!(ops.len(), 2);
+        assert_eq!(ops.len(), 4);
         assert_eq!(ops[0].source, "DrumGizmo:5-OHL");
-        assert!(ops[0].target.ends_with(":playback_FL"));
+        assert_eq!(ops[0].target, "TD50-Safety-Bus:playback_FL");
         assert_eq!(ops[1].source, "DrumGizmo:6-OHR");
-        assert!(ops[1].target.ends_with(":playback_FR"));
+        assert_eq!(ops[1].target, "TD50-Safety-Bus:playback_FR");
+        assert_eq!(ops[2].source, "TD50-Safety-Bus.monitor:capture_FL");
+        assert_eq!(ops[2].target, format!("{DEFAULT_SINK}:playback_FL"));
+        assert_eq!(ops[3].source, "TD50-Safety-Bus.monitor:capture_FR");
+        assert_eq!(ops[3].target, format!("{DEFAULT_SINK}:playback_FR"));
     }
 }

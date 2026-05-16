@@ -54,6 +54,8 @@ enum Command {
         monitor_sink: String,
         #[arg(long, default_value = "75%")]
         monitor_volume: String,
+        #[arg(long, default_value_t = false)]
+        streaming: bool,
     },
 
     /// Run offline checks that do not touch PipeWire, ALSA, or live audio clients.
@@ -76,6 +78,8 @@ enum Command {
         route_monitor: bool,
         #[arg(long, default_value_t = false)]
         route_obs: bool,
+        #[arg(long, default_value_t = false)]
+        streaming: bool,
     },
 
     /// Stop then start the selected kit. Dry-run by default.
@@ -92,6 +96,8 @@ enum Command {
         route_monitor: bool,
         #[arg(long, default_value_t = false)]
         route_obs: bool,
+        #[arg(long, default_value_t = false)]
+        streaming: bool,
         #[arg(long, default_value_t = true)]
         safety: bool,
     },
@@ -234,6 +240,13 @@ impl From<GraphState> for DesiredState {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct LaunchOptions {
+    route_monitor: bool,
+    route_obs: bool,
+    streaming: bool,
+}
+
 impl Kit {
     fn is_experimental(self) -> bool {
         !matches!(self, Self::Drs)
@@ -269,6 +282,7 @@ fn run_result(cli: Cli) -> Result<(), String> {
             route_monitor,
             monitor_sink,
             monitor_volume,
+            streaming,
         } => plan(
             kit,
             allow_experimental,
@@ -276,6 +290,7 @@ fn run_result(cli: Cli) -> Result<(), String> {
             route_monitor,
             &monitor_sink,
             &monitor_volume,
+            streaming,
         ),
         Command::Doctor { drs_midimap } => doctor(&drs_midimap),
         Command::Start {
@@ -285,13 +300,17 @@ fn run_result(cli: Cli) -> Result<(), String> {
             execute,
             route_monitor,
             route_obs,
+            streaming,
         } => start_command(
             kit,
             allow_experimental,
             dry_run,
             execute,
-            route_monitor,
-            route_obs,
+            LaunchOptions {
+                route_monitor,
+                route_obs,
+                streaming,
+            },
         ),
         Command::Switch {
             kit,
@@ -300,14 +319,18 @@ fn run_result(cli: Cli) -> Result<(), String> {
             execute,
             route_monitor,
             route_obs,
+            streaming,
             safety,
         } => switch_command(
             kit,
             allow_experimental,
             dry_run,
             execute,
-            route_monitor,
-            route_obs,
+            LaunchOptions {
+                route_monitor,
+                route_obs,
+                streaming,
+            },
             safety,
         ),
         Command::Preflight {
@@ -353,6 +376,7 @@ fn plan(
     route_monitor: bool,
     monitor_sink: &str,
     monitor_volume: &str,
+    streaming: bool,
 ) -> Result<(), String> {
     if kit.is_experimental() && !allow_experimental {
         return Err(format!(
@@ -370,7 +394,22 @@ fn plan(
     println!("monitor sink: {monitor_sink}");
     println!("monitor volume clamp: {monitor_volume}");
     println!("route OBS: {route_obs}");
+    let mut config = StartConfig::drs_default(home_dir(), repo_dir());
+    config.route_monitor = route_monitor;
+    config.route_obs = route_obs;
+    config.monitor_sinks = vec![monitor_sink.to_string()];
+    config.monitor_volume = monitor_volume.to_string();
+    if streaming {
+        config.streaming = true;
+    }
+    println!("streaming: {}", config.streaming);
+    println!("load timeout: {}s", config.load_timeout_secs);
+    println!("safety bus: {}", config.safety_bus);
     println!("cache: {}", cache_dir().display());
+    println!();
+    for op in plan_drs(&config) {
+        println!("- {}", describe_op(&op));
+    }
     println!();
     println!("No live clients were started. No PipeWire graph was probed.");
     let _ = write_event(TraceEvent::info(
@@ -413,8 +452,7 @@ fn start_command(
     allow_experimental: bool,
     dry_run: bool,
     execute: bool,
-    route_monitor: bool,
-    route_obs: bool,
+    launch: LaunchOptions,
 ) -> Result<(), String> {
     let live = execute;
     if !dry_run && !live {
@@ -443,8 +481,11 @@ fn start_command(
 
     let mut config = StartConfig::drs_default(home_dir(), repo_dir());
     config.midi_client = preflight_report.midi_client;
-    config.route_monitor = route_monitor;
-    config.route_obs = route_obs;
+    config.route_monitor = launch.route_monitor;
+    config.route_obs = launch.route_obs;
+    if launch.streaming {
+        config.streaming = true;
+    }
     let ops = plan_drs(&config);
     let manifest = if live {
         None
@@ -525,8 +566,7 @@ fn switch_command(
     allow_experimental: bool,
     dry_run: bool,
     execute: bool,
-    route_monitor: bool,
-    route_obs: bool,
+    launch: LaunchOptions,
     safety: bool,
 ) -> Result<(), String> {
     println!(
@@ -543,24 +583,10 @@ fn switch_command(
     ));
     if execute {
         stop_command(false, true, safety)?;
-        start_command(
-            kit,
-            allow_experimental,
-            dry_run,
-            execute,
-            route_monitor,
-            route_obs,
-        )
+        start_command(kit, allow_experimental, dry_run, execute, launch)
     } else {
         stop_command(true, true, safety)?;
-        start_command(
-            kit,
-            allow_experimental,
-            true,
-            false,
-            route_monitor,
-            route_obs,
-        )
+        start_command(kit, allow_experimental, true, false, launch)
     }
 }
 

@@ -21,6 +21,7 @@ polyrhythm policy
 polyrhythm plan --kit drs
 polyrhythm doctor
 polyrhythm start --kit drs --dry-run
+polyrhythm switch --kit drs --dry-run
 polyrhythm preflight
 polyrhythm status
 polyrhythm status --strict

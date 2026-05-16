@@ -71,6 +71,24 @@ enum Command {
         route_obs: bool,
     },
 
+    /// Stop then start the selected kit. Dry-run by default.
+    Switch {
+        #[arg(long, value_enum, default_value_t = Kit::Drs)]
+        kit: Kit,
+        #[arg(long)]
+        allow_experimental: bool,
+        #[arg(long, default_value_t = true, conflicts_with = "execute")]
+        dry_run: bool,
+        #[arg(long)]
+        execute: bool,
+        #[arg(long, default_value_t = true)]
+        route_monitor: bool,
+        #[arg(long, default_value_t = false)]
+        route_obs: bool,
+        #[arg(long, default_value_t = true)]
+        safety: bool,
+    },
+
     /// Run preflight checks for the known DRS path without starting live audio clients.
     Preflight {
         #[arg(long, value_enum, default_value_t = Kit::Drs)]
@@ -190,6 +208,23 @@ fn run_result(cli: Cli) -> Result<(), String> {
             execute,
             route_monitor,
             route_obs,
+        ),
+        Command::Switch {
+            kit,
+            allow_experimental,
+            dry_run,
+            execute,
+            route_monitor,
+            route_obs,
+            safety,
+        } => switch_command(
+            kit,
+            allow_experimental,
+            dry_run,
+            execute,
+            route_monitor,
+            route_obs,
+            safety,
         ),
         Command::Preflight {
             kit,
@@ -378,6 +413,50 @@ fn start_command(
             ),
         ));
         Ok(())
+    }
+}
+
+fn switch_command(
+    kit: Kit,
+    allow_experimental: bool,
+    dry_run: bool,
+    execute: bool,
+    route_monitor: bool,
+    route_obs: bool,
+    safety: bool,
+) -> Result<(), String> {
+    println!(
+        "polyrhythm switch {}",
+        if execute { "execute" } else { "dry-run" }
+    );
+    let _ = write_event(TraceEvent::info(
+        if execute {
+            "switch_execute"
+        } else {
+            "switch_dry_run"
+        },
+        format!("kit={}", kit.name()),
+    ));
+    if execute {
+        stop_command(false, true, safety)?;
+        start_command(
+            kit,
+            allow_experimental,
+            dry_run,
+            execute,
+            route_monitor,
+            route_obs,
+        )
+    } else {
+        stop_command(true, true, safety)?;
+        start_command(
+            kit,
+            allow_experimental,
+            true,
+            false,
+            route_monitor,
+            route_obs,
+        )
     }
 }
 

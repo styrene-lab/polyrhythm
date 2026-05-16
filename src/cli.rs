@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::preflight::{has_failures, run as run_preflight, CheckStatus, PreflightConfig};
+use crate::preflight::{
+    has_failures, run as run_preflight, CheckStatus, PreflightConfig, PreflightReport,
+};
 use crate::process::{pid_statuses, stop, ProcessState, StopOptions};
 use crate::start::{describe_op, plan_drs, write_manifest, StartConfig};
 use crate::td50_mapper::{mapped_notes_from_midimap, DRS_EMITTED_NOTES};
@@ -268,7 +270,19 @@ fn start_command(
         return Err("first start planning pass only supports DRS".to_string());
     }
 
+    let preflight_config = PreflightConfig::drs_default(&home_dir(), &repo_dir());
+    let preflight_report = run_preflight(&preflight_config);
+    if has_failures(&preflight_report.checks) {
+        let _ = write_event(TraceEvent::error(
+            "start_dry_run_preflight_failed",
+            "one or more preflight checks failed",
+        ));
+        print_preflight_report(Kit::Drs, &preflight_report);
+        return Err("start dry-run preflight failed".to_string());
+    }
+
     let mut config = StartConfig::drs_default(home_dir(), repo_dir());
+    config.midi_client = preflight_report.midi_client;
     config.route_monitor = route_monitor;
     config.route_obs = route_obs;
     let ops = plan_drs(&config);
@@ -307,21 +321,10 @@ fn preflight(kit: Kit, allow_experimental: bool) -> Result<(), String> {
     }
 
     let config = PreflightConfig::drs_default(&home_dir(), &repo_dir());
-    let checks = run_preflight(&config);
-    println!("polyrhythm preflight");
-    println!("kit: {}", kit.name());
-    for check in &checks {
-        let status = match check.status {
-            CheckStatus::Ok => "ok",
-            CheckStatus::Warn => "warn",
-            CheckStatus::Fail => "fail",
-        };
-        println!("{status}: {} — {}", check.name, check.detail);
-    }
-    println!("PipeWire graph probing: skipped");
-    println!("live audio start: skipped");
+    let report = run_preflight(&config);
+    print_preflight_report(kit, &report);
 
-    if has_failures(&checks) {
+    if has_failures(&report.checks) {
         let _ = write_event(TraceEvent::error(
             "preflight_failed",
             "one or more checks failed",
@@ -331,6 +334,24 @@ fn preflight(kit: Kit, allow_experimental: bool) -> Result<(), String> {
         let _ = write_event(TraceEvent::info("preflight_ok", "DRS preflight passed"));
         Ok(())
     }
+}
+
+fn print_preflight_report(kit: Kit, report: &PreflightReport) {
+    println!("polyrhythm preflight");
+    println!("kit: {}", kit.name());
+    for check in &report.checks {
+        let status = match check.status {
+            CheckStatus::Ok => "ok",
+            CheckStatus::Warn => "warn",
+            CheckStatus::Fail => "fail",
+        };
+        println!("{status}: {} — {}", check.name, check.detail);
+    }
+    if let Some(client) = report.midi_client {
+        println!("detected MIDI client: {client}");
+    }
+    println!("PipeWire graph probing: skipped");
+    println!("live audio start: skipped");
 }
 
 fn status() -> Result<(), String> {

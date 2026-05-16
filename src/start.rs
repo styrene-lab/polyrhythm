@@ -14,6 +14,7 @@ pub struct StartConfig {
     pub cache_dir: PathBuf,
     pub state_dir: PathBuf,
     pub midi_device_name: String,
+    pub midi_client: Option<u32>,
     pub midi_port: u8,
     pub mapper_bin: PathBuf,
     pub mapper_client_name: String,
@@ -40,6 +41,7 @@ impl StartConfig {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| home.join(".cache/polyrhythm")),
             midi_device_name: "U2MIDI Pro".to_string(),
+            midi_client: None,
             midi_port: 0,
             mapper_bin: env::var_os("TD50_HIHAT_MAPPER")
                 .map(PathBuf::from)
@@ -112,7 +114,10 @@ pub fn plan_drs(config: &StartConfig) -> Vec<PlannedOp> {
     ops.push(PlannedOp::StartMapper {
         command: vec![
             config.mapper_bin.display().to_string(),
-            "<detected-midi-client>".to_string(),
+            config
+                .midi_client
+                .map(|client| client.to_string())
+                .unwrap_or_else(|| "<detected-midi-client>".to_string()),
             config.midi_port.to_string(),
         ],
         pidfile: config.cache_dir.join("hihat-mapper.pid"),
@@ -270,6 +275,7 @@ fn manifest_json(config: &StartConfig, ops: &[PlannedOp]) -> String {
             "  \"engine\": \"drumgizmo\",\n",
             "  \"dry_run\": true,\n",
             "  \"midi_device\": \"{}\",\n",
+            "  \"midi_client\": {},\n",
             "  \"mapper\": \"{}\",\n",
             "  \"drumkit\": \"{}\",\n",
             "  \"midimap\": \"{}\",\n",
@@ -281,6 +287,10 @@ fn manifest_json(config: &StartConfig, ops: &[PlannedOp]) -> String {
         ),
         escape_json(&config.run_id),
         escape_json(&config.midi_device_name),
+        config
+            .midi_client
+            .map(|client| client.to_string())
+            .unwrap_or_else(|| "null".to_string()),
         escape_json(&config.mapper_bin.display().to_string()),
         escape_json(&config.kit.display().to_string()),
         escape_json(&config.midimap.display().to_string()),

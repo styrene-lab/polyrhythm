@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+use crate::preflight::{has_failures, run as run_preflight, CheckStatus, PreflightConfig};
 use crate::process::{pid_statuses, stop, ProcessState, StopOptions};
 use crate::td50_mapper::{mapped_notes_from_midimap, DRS_EMITTED_NOTES};
+use crate::trace::{tail as trace_tail, trace_path, write_event, TraceEvent};
 
 const DEFAULT_CACHE: &str = ".cache/td50";
 const DEFAULT_MONITOR_SINK: &str = "alsa_output.pci-0000_0e_00.4.analog-stereo";
@@ -47,6 +49,14 @@ enum Command {
         drs_midimap: PathBuf,
     },
 
+    /// Run preflight checks for the known DRS path without starting live audio clients.
+    Preflight {
+        #[arg(long, value_enum, default_value_t = Kit::Drs)]
+        kit: Kit,
+        #[arg(long)]
+        allow_experimental: bool,
+    },
+
     /// Show cached TD-50 process state without PipeWire graph probing.
     Status,
 
@@ -66,8 +76,25 @@ enum Command {
         monitor_volume: String,
     },
 
+    /// Inspect the JSONL trace log.
+    Trace {
+        #[command(subcommand)]
+        command: TraceCommand,
+    },
+
     /// Print the current safety policy encoded by the CLI.
     Policy,
+}
+
+#[derive(Debug, Subcommand)]
+enum TraceCommand {
+    /// Print the trace file path.
+    Path,
+    /// Print the last N trace events.
+    Tail {
+        #[arg(long, default_value_t = 20)]
+        lines: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -98,6 +125,7 @@ pub fn run() -> i32 {
         Ok(()) => 0,
         Err(message) => {
             eprintln!("ERROR: {message}");
+            let _ = write_event(TraceEvent::error("command_failed", &message));
             2
         }
     }
@@ -121,12 +149,17 @@ fn run_result(cli: Cli) -> Result<(), String> {
             &monitor_volume,
         ),
         Command::Doctor { drs_midimap } => doctor(&drs_midimap),
+        Command::Preflight {
+            kit,
+            allow_experimental,
+        } => preflight(kit, allow_experimental),
         Command::Status => status(),
         Command::Stop { dry_run, force } => stop_command(dry_run, force),
         Command::LegacyEnv {
             monitor_sink,
             monitor_volume,
         } => legacy_env(&monitor_sink, &monitor_volume),
+        Command::Trace { command } => trace(command),
         Command::Policy => policy(),
     }
 }
@@ -158,6 +191,10 @@ fn plan(
     println!("cache: {}", cache_dir().display());
     println!();
     println!("No live clients were started. No PipeWire graph was probed.");
+    let _ = write_event(TraceEvent::info(
+        "plan",
+        format!("kit={} route_obs={route_obs}", kit.name()),
+    ));
     Ok(())
 }
 
@@ -175,13 +212,56 @@ fn doctor(drs_midimap: &Path) -> Result<(), String> {
         println!("mapper coverage: ok");
     } else {
         println!("mapper coverage: missing notes {missing:?}");
+        let _ = write_event(TraceEvent::error(
+            "doctor_failed",
+            "midimap coverage failed",
+        ));
         return Err("DRS midimap does not cover all emitted mapper notes".to_string());
     }
 
     println!("live audio safety: ok (offline-only check)");
     println!("PipeWire graph probing: skipped");
     println!("ALSA client probing: skipped");
+    let _ = write_event(TraceEvent::info("doctor_ok", "offline doctor passed"));
     Ok(())
+}
+
+fn preflight(kit: Kit, allow_experimental: bool) -> Result<(), String> {
+    if kit.is_experimental() && !allow_experimental {
+        return Err(format!(
+            "kit '{}' is blocked by default; pass --allow-experimental for isolated diagnostics",
+            kit.name()
+        ));
+    }
+    if kit != Kit::Drs {
+        return Err("first preflight pass only supports DRS".to_string());
+    }
+
+    let config = PreflightConfig::drs_default(&home_dir(), &repo_dir());
+    let checks = run_preflight(&config);
+    println!("polyrhythm preflight");
+    println!("kit: {}", kit.name());
+    for check in &checks {
+        let status = match check.status {
+            CheckStatus::Ok => "ok",
+            CheckStatus::Warn => "warn",
+            CheckStatus::Fail => "fail",
+        };
+        println!("{status}: {} — {}", check.name, check.detail);
+    }
+    println!("PipeWire graph probing: skipped");
+    println!("live audio start: skipped");
+
+    if has_failures(&checks) {
+        let _ = write_event(TraceEvent::error(
+            "preflight_failed",
+            "one or more checks failed",
+        ));
+        Err("preflight failed".to_string())
+    } else {
+        let _ = write_event(TraceEvent::info("preflight_ok", "DRS preflight passed"));
+        Ok(())
+    }
 }
 
 fn status() -> Result<(), String> {
@@ -207,6 +287,7 @@ fn status() -> Result<(), String> {
         );
     }
     println!("PipeWire graph probing: skipped");
+    let _ = write_event(TraceEvent::info("status", "status inspected pidfiles"));
     Ok(())
 }
 
@@ -223,6 +304,11 @@ fn stop_command(dry_run: bool, force: bool) -> Result<(), String> {
         println!("dry run: no processes were signaled and no pidfiles were removed");
     }
     println!("PipeWire/WirePlumber restart: skipped");
+    let event = if dry_run { "stop_dry_run" } else { "stop" };
+    let _ = write_event(TraceEvent::warn(
+        event,
+        format!("force={force}; PipeWire restart skipped"),
+    ));
     Ok(())
 }
 
@@ -233,7 +319,26 @@ fn legacy_env(monitor_sink: &str, monitor_volume: &str) -> Result<(), String> {
     println!("export TD50_MONITOR_SINKS='{monitor_sink}'");
     println!("export TD50_MONITOR_VOLUME='{monitor_volume}'");
     println!("export TD50_ALLOW_EXPERIMENTAL_KITS=0");
+    let _ = write_event(TraceEvent::info(
+        "legacy_env",
+        "printed safe legacy environment",
+    ));
     Ok(())
+}
+
+fn trace(command: TraceCommand) -> Result<(), String> {
+    match command {
+        TraceCommand::Path => {
+            println!("{}", trace_path().display());
+            Ok(())
+        }
+        TraceCommand::Tail { lines } => {
+            for line in trace_tail(lines).map_err(|err| format!("failed to read trace: {err}"))? {
+                println!("{line}");
+            }
+            Ok(())
+        }
+    }
 }
 
 fn policy() -> Result<(), String> {
@@ -245,6 +350,7 @@ fn policy() -> Result<(), String> {
     println!("- Normal controls must not run broad pw-link graph discovery.");
     println!("- The safe default monitor sink is {DEFAULT_MONITOR_SINK}.");
     println!("- The future ALSA mapper must preserve client '{DEFAULT_MAPPER_CLIENT}' and port '{DEFAULT_MAPPER_PORT}'.");
+    let _ = write_event(TraceEvent::info("policy", "printed safety policy"));
     Ok(())
 }
 
@@ -261,6 +367,16 @@ fn cache_dir() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(DEFAULT_CACHE)))
         .unwrap_or_else(|| PathBuf::from(DEFAULT_CACHE))
+}
+
+fn home_dir() -> PathBuf {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn repo_dir() -> PathBuf {
+    env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
 #[cfg(test)]

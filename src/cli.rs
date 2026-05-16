@@ -3,6 +3,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::process::{pid_statuses, stop, ProcessState, StopOptions};
+
 use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::td50_mapper::{mapped_notes_from_midimap, DRS_EMITTED_NOTES};
@@ -109,6 +111,8 @@ fn run_result(cli: Cli) -> Result<(), String> {
             &monitor_volume,
         ),
         Command::Doctor { drs_midimap } => doctor(&drs_midimap),
+        Command::Status => status(),
+        Command::Stop { dry_run, force } => stop_command(dry_run, force),
         Command::LegacyEnv {
             monitor_sink,
             monitor_volume,

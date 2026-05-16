@@ -20,11 +20,15 @@ ad-hoc shell orchestration with explicit safety policy and tested MIDI mapping.
 polyrhythm policy
 polyrhythm plan --kit drs
 polyrhythm doctor
+polyrhythm status
+polyrhythm stop --dry-run
 polyrhythm legacy-env
 ```
 
 These commands are intentionally offline/safe: they do not start DrumGizmo, do
-not probe the PipeWire graph, and do not restart audio services.
+not probe the PipeWire graph, and do not restart audio services. `stop` is the
+first live-control command: it only targets known TD-50 client processes and
+pidfiles, never PipeWire/WirePlumber.
 
 ## Safety constraints
 

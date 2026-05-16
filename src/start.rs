@@ -1,8 +1,12 @@
 use std::env;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use crate::process::{stop, StopOptions};
 
 const DEFAULT_MONITOR_SINK: &str = "alsa_output.pci-0000_0e_00.4.analog-stereo";
 const DEFAULT_SAMPLE_PARAMS: &str = "close=1.0,diverse=0.12,random=0.02";
@@ -96,6 +100,19 @@ pub enum PlannedOp {
     WriteManifest {
         path: PathBuf,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionResult {
+    pub description: String,
+    pub status: ExecutionStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecutionStatus {
+    Ok,
+    Failed(String),
+    Skipped(String),
 }
 
 pub fn plan_drs(config: &StartConfig) -> Vec<PlannedOp> {
@@ -208,14 +225,59 @@ pub fn plan_drs(config: &StartConfig) -> Vec<PlannedOp> {
     ops
 }
 
+pub fn execute_drs(config: &StartConfig, ops: &[PlannedOp]) -> Vec<ExecutionResult> {
+    let mut results = Vec::new();
+    let _ = fs::create_dir_all(&config.cache_dir);
+
+    for op in ops {
+        let description = describe_op(op);
+        let status = match op {
+            PlannedOp::StopExisting => stop(
+                &config.cache_dir,
+                StopOptions {
+                    dry_run: false,
+                    force: true,
+                },
+            )
+            .map(|_| ExecutionStatus::Ok)
+            .unwrap_or_else(|err| ExecutionStatus::Failed(err.to_string())),
+            PlannedOp::ClampMonitorVolume { sink, volume } => clamp_monitor(sink, volume),
+            PlannedOp::StartMapper {
+                command,
+                pidfile,
+                log,
+            } => start_process(command, pidfile, log, Duration::from_secs(1)),
+            PlannedOp::StartDrumGizmo {
+                command,
+                pidfile,
+                log,
+            } => start_process(command, pidfile, log, Duration::from_secs(3)),
+            PlannedOp::Link {
+                source,
+                target,
+                timeout_secs,
+            } => link(source, target, *timeout_secs),
+            PlannedOp::WriteManifest { .. } => write_manifest(config, ops)
+                .map(|_| ExecutionStatus::Ok)
+                .unwrap_or_else(|err| ExecutionStatus::Failed(err.to_string())),
+        };
+        results.push(ExecutionResult {
+            description,
+            status,
+        });
+    }
+
+    results
+}
+
 pub fn write_manifest(config: &StartConfig, ops: &[PlannedOp]) -> io::Result<PathBuf> {
     let path = manifest_path(config);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&path, manifest_json(config, ops))?;
+    fs::write(&path, manifest_json(config, ops, true))?;
     let current = config.state_dir.join("current-run.json");
-    fs::write(current, manifest_json(config, ops))?;
+    fs::write(current, manifest_json(config, ops, true))?;
     Ok(path)
 }
 
@@ -261,7 +323,89 @@ pub fn describe_op(op: &PlannedOp) -> String {
     }
 }
 
-fn manifest_json(config: &StartConfig, ops: &[PlannedOp]) -> String {
+fn clamp_monitor(sink: &str, volume: &str) -> ExecutionStatus {
+    let vol = Command::new("pactl")
+        .arg("set-sink-volume")
+        .arg(sink)
+        .arg(volume)
+        .status();
+    let mute = Command::new("pactl")
+        .arg("set-sink-mute")
+        .arg(sink)
+        .arg("0")
+        .status();
+    if vol.map(|s| s.success()).unwrap_or(false) && mute.map(|s| s.success()).unwrap_or(false) {
+        ExecutionStatus::Ok
+    } else {
+        ExecutionStatus::Failed("pactl monitor clamp failed".to_string())
+    }
+}
+
+fn start_process(
+    command: &[String],
+    pidfile: &PathBuf,
+    log: &PathBuf,
+    wait: Duration,
+) -> ExecutionStatus {
+    if command.is_empty() {
+        return ExecutionStatus::Failed("empty command".to_string());
+    }
+    let Some(parent) = log.parent() else {
+        return ExecutionStatus::Failed("log has no parent".to_string());
+    };
+    if let Err(err) = fs::create_dir_all(parent) {
+        return ExecutionStatus::Failed(err.to_string());
+    }
+    let log_file = match OpenOptions::new().create(true).append(true).open(log) {
+        Ok(file) => file,
+        Err(err) => return ExecutionStatus::Failed(err.to_string()),
+    };
+    let stderr = match log_file.try_clone() {
+        Ok(file) => file,
+        Err(err) => return ExecutionStatus::Failed(err.to_string()),
+    };
+    let child = Command::new(&command[0])
+        .args(&command[1..])
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(stderr))
+        .spawn();
+    let mut child = match child {
+        Ok(child) => child,
+        Err(err) => return ExecutionStatus::Failed(err.to_string()),
+    };
+    if let Some(parent) = pidfile.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Err(err) = fs::write(pidfile, format!("{}\n", child.id())) {
+        return ExecutionStatus::Failed(err.to_string());
+    }
+    thread::sleep(wait);
+    match child.try_wait() {
+        Ok(None) => ExecutionStatus::Ok,
+        Ok(Some(status)) => ExecutionStatus::Failed(format!("process exited early: {status}")),
+        Err(err) => ExecutionStatus::Failed(err.to_string()),
+    }
+}
+
+fn link(source: &str, target: &str, timeout_secs: u64) -> ExecutionStatus {
+    let status = Command::new("timeout")
+        .arg(format!("{}s", timeout_secs.max(1)))
+        .arg("pw-link")
+        .arg(source)
+        .arg(target)
+        .status();
+    match status {
+        Ok(status) if status.success() => ExecutionStatus::Ok,
+        Ok(status) if status.code() == Some(124) => {
+            ExecutionStatus::Failed("pw-link timed out".to_string())
+        }
+        Ok(status) => ExecutionStatus::Skipped(format!("pw-link exited with {status}")),
+        Err(err) => ExecutionStatus::Failed(err.to_string()),
+    }
+}
+
+fn manifest_json(config: &StartConfig, ops: &[PlannedOp], dry_run: bool) -> String {
     let ops_json = ops
         .iter()
         .map(|op| format!("\"{}\"", escape_json(&describe_op(op))))
@@ -273,7 +417,7 @@ fn manifest_json(config: &StartConfig, ops: &[PlannedOp]) -> String {
             "  \"run_id\": \"{}\",\n",
             "  \"kit\": \"drs\",\n",
             "  \"engine\": \"drumgizmo\",\n",
-            "  \"dry_run\": true,\n",
+            "  \"dry_run\": {},\n",
             "  \"midi_device\": \"{}\",\n",
             "  \"midi_client\": {},\n",
             "  \"mapper\": \"{}\",\n",
@@ -286,6 +430,7 @@ fn manifest_json(config: &StartConfig, ops: &[PlannedOp]) -> String {
             "}}\n"
         ),
         escape_json(&config.run_id),
+        dry_run,
         escape_json(&config.midi_device_name),
         config
             .midi_client

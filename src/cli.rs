@@ -9,7 +9,9 @@ use crate::preflight::{
     has_failures, run as run_preflight, CheckStatus, PreflightConfig, PreflightReport,
 };
 use crate::process::{pid_statuses, stop, ProcessState, StopOptions};
-use crate::start::{describe_op, plan_drs, write_manifest, StartConfig};
+use crate::start::{
+    describe_op, execute_drs, plan_drs, write_manifest, ExecutionStatus, StartConfig,
+};
 use crate::td50_mapper::{mapped_notes_from_midimap, DRS_EMITTED_NOTES};
 use crate::trace::{tail as trace_tail, trace_path, write_event, TraceEvent};
 
@@ -58,8 +60,10 @@ enum Command {
         kit: Kit,
         #[arg(long)]
         allow_experimental: bool,
-        #[arg(long, default_value_t = true)]
+        #[arg(long, default_value_t = true, conflicts_with = "execute")]
         dry_run: bool,
+        #[arg(long)]
+        execute: bool,
         #[arg(long, default_value_t = true)]
         route_monitor: bool,
         #[arg(long, default_value_t = false)]
@@ -170,9 +174,17 @@ fn run_result(cli: Cli) -> Result<(), String> {
             kit,
             allow_experimental,
             dry_run,
+            execute,
             route_monitor,
             route_obs,
-        } => start_command(kit, allow_experimental, dry_run, route_monitor, route_obs),
+        } => start_command(
+            kit,
+            allow_experimental,
+            dry_run,
+            execute,
+            route_monitor,
+            route_obs,
+        ),
         Command::Preflight {
             kit,
             allow_experimental,
@@ -254,11 +266,13 @@ fn start_command(
     kit: Kit,
     allow_experimental: bool,
     dry_run: bool,
+    execute: bool,
     route_monitor: bool,
     route_obs: bool,
 ) -> Result<(), String> {
-    if !dry_run {
-        return Err("live start is not implemented yet; use --dry-run".to_string());
+    let live = execute;
+    if !dry_run && !live {
+        return Err("use --dry-run or --execute".to_string());
     }
     if kit.is_experimental() && !allow_experimental {
         return Err(format!(
@@ -286,27 +300,67 @@ fn start_command(
     config.route_monitor = route_monitor;
     config.route_obs = route_obs;
     let ops = plan_drs(&config);
-    let manifest = write_manifest(&config, &ops)
-        .map_err(|err| format!("failed to write dry-run manifest: {err}"))?;
+    let manifest = if live {
+        None
+    } else {
+        Some(
+            write_manifest(&config, &ops)
+                .map_err(|err| format!("failed to write dry-run manifest: {err}"))?,
+        )
+    };
 
-    println!("polyrhythm start dry-run");
+    println!(
+        "polyrhythm start {}",
+        if live { "execute" } else { "dry-run" }
+    );
     println!("kit: {}", kit.name());
     println!("run_id: {}", config.run_id);
-    println!("manifest: {}", manifest.display());
+    if let Some(manifest) = &manifest {
+        println!("manifest: {}", manifest.display());
+    }
     for op in &ops {
         println!("- {}", describe_op(op));
     }
-    println!("live audio start: skipped");
-    println!("PipeWire graph probing: skipped");
-    let _ = write_event(TraceEvent::info(
-        "start_dry_run",
-        format!(
-            "run_id={} kit=drs manifest={}",
-            config.run_id,
-            manifest.display()
-        ),
-    ));
-    Ok(())
+
+    if live {
+        let results = execute_drs(&config, &ops);
+        for result in &results {
+            let status = match &result.status {
+                ExecutionStatus::Ok => "ok".to_string(),
+                ExecutionStatus::Failed(reason) => format!("failed: {reason}"),
+                ExecutionStatus::Skipped(reason) => format!("skipped: {reason}"),
+            };
+            println!("{status}: {}", result.description);
+        }
+        println!("PipeWire graph probing: skipped");
+        let failed = results
+            .iter()
+            .any(|result| matches!(result.status, ExecutionStatus::Failed(_)));
+        let _ = write_event(TraceEvent::info(
+            "start_execute",
+            format!("run_id={} failed={failed}", config.run_id),
+        ));
+        if failed {
+            Err("start execution had failures".to_string())
+        } else {
+            Ok(())
+        }
+    } else {
+        println!("live audio start: skipped");
+        println!("PipeWire graph probing: skipped");
+        let manifest_text = manifest
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+        let _ = write_event(TraceEvent::info(
+            "start_dry_run",
+            format!(
+                "run_id={} kit=drs manifest={}",
+                config.run_id, manifest_text
+            ),
+        ));
+        Ok(())
+    }
 }
 
 fn preflight(kit: Kit, allow_experimental: bool) -> Result<(), String> {

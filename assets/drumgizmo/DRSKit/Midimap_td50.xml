@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Roland TD-50 -> TD50-DrumGizmo-Hihat-Mapper -> DrumGizmo DRSKit -->
+<midimap>
+	<map note="35" instr="Kdrum_without_contact"/>
+	<map note="36" instr="Kdrum_with_contact"/>
+	<map note="37" instr="Snare_rim"/>
+	<map note="38" instr="Snare"/>
+
+	<!-- Hi-hat artificial notes produced by src/td50_drumgizmo_hihat_mapper.c. Use high notes to avoid TD-50 crash note collisions. -->
+	<map note="42" instr="Hihat_closed"/>
+	<map note="41" instr="Hihat_semi_open"/>
+	<map note="46" instr="Hihat_open"/>
+	<map note="90" instr="Hihat_closed_shank"/>
+	<map note="91" instr="Hihat_semi_open"/>
+	<map note="92" instr="Hihat_open_tip"/>
+	<map note="44" instr="Hihat_foot"/>
+
+	<map note="48" instr="Tom1"/>
+	<map note="45" instr="Tom2"/>
+	<map note="43" instr="Tom3"/>
+	<!-- TD-50 tom/snare rim capture: tom1=50, tom2=47, tom3=58, snare rim=40 -->
+	<map note="50" instr="Tom1_whisker"/>
+	<map note="47" instr="Tom2_whisker"/>
+	<map note="58" instr="Tom3_whisker"/>
+	<map note="40" instr="Snare_rim"/>
+
+	<!-- TD-50 cymbal capture, left-to-right: crash1, crash2, ride. -->
+	<map note="80" instr="Crash_left_tip"/>
+	<map note="81" instr="Crash_left_shank"/>
+	<map note="82" instr="Ride_tip_bell_chain"/>
+	<map note="57" instr="Crash_right_tip"/>
+	<map note="52" instr="Crash_right_shank"/>
+	<map note="51" instr="Ride_tip"/>
+	<map note="53" instr="Ride_shank_bell"/>
+</midimap>

@@ -1,0 +1,15 @@
+[package]
+name = "polyrhythm"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "polyrhythm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "td50-drumgizmo-hihat-mapper-rs"
+path = "src/bin/td50-drumgizmo-hihat-mapper-rs.rs"
+
+[dependencies]

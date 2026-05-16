@@ -10,8 +10,10 @@ use crate::graph::{
     check as graph_check, dump as graph_dump, print_summary as print_graph_summary, DesiredState,
 };
 use crate::monitor::{
-    default_sink as default_monitor_sink, execute as execute_monitor, plan as plan_monitor,
-    MonitorAction, MonitorPair,
+    default_sink as default_monitor_sink, describe_setup_op as describe_monitor_setup_op,
+    execute as execute_monitor, execute_setup as execute_monitor_setup, plan as plan_monitor,
+    setup_failed as monitor_setup_failed, setup_plan as plan_monitor_setup, MonitorAction,
+    MonitorPair,
 };
 use crate::preflight::{
     has_failures, run as run_preflight, CheckStatus, PreflightConfig, PreflightReport,
@@ -750,6 +752,7 @@ fn monitor_test(
     } else {
         sink
     };
+    let setup_ops = plan_monitor_setup(sink, volume);
     let ops = plan_monitor(pair.into(), sink);
     println!(
         "polyrhythm monitor-test {}",
@@ -758,11 +761,24 @@ fn monitor_test(
     println!("pair: {pair:?}");
     println!("sink: {sink}");
     println!("volume: {volume}");
+    for op in &setup_ops {
+        println!("- {}", describe_monitor_setup_op(op));
+    }
     for op in &ops {
         println!("- link {} -> {}", op.source, op.target);
     }
     if live {
-        quiet(sink, volume)?;
+        let setup_results = execute_monitor_setup(&setup_ops);
+        for result in &setup_results {
+            println!("{result}");
+        }
+        if monitor_setup_failed(&setup_results) {
+            let _ = write_event(TraceEvent::error(
+                "monitor_test_setup_failed",
+                format!("pair={pair:?} sink={sink} volume={volume}"),
+            ));
+            return Err("monitor-test setup failed".to_string());
+        }
         for result in execute_monitor(MonitorAction::Link, &ops) {
             println!("{result}");
         }

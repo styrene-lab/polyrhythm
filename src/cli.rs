@@ -9,6 +9,10 @@ use crate::audio::{apply_safety, restore, MonitorSafety};
 use crate::graph::{
     check as graph_check, dump as graph_dump, print_summary as print_graph_summary, DesiredState,
 };
+use crate::monitor::{
+    default_sink as default_monitor_sink, execute as execute_monitor, plan as plan_monitor,
+    MonitorAction, MonitorPair,
+};
 use crate::preflight::{
     has_failures, run as run_preflight, CheckStatus, PreflightConfig, PreflightReport,
 };
@@ -153,6 +157,32 @@ enum Command {
         sink: String,
     },
 
+    /// Add a minimal DrumGizmo monitor route. Dry-run by default.
+    MonitorTest {
+        #[arg(long, value_enum, default_value_t = MonitorPairArg::Overheads)]
+        pair: MonitorPairArg,
+        #[arg(long, default_value = "5%")]
+        volume: String,
+        #[arg(long, default_value = DEFAULT_MONITOR_SINK)]
+        sink: String,
+        #[arg(long, default_value_t = true, conflicts_with = "execute")]
+        dry_run: bool,
+        #[arg(long)]
+        execute: bool,
+    },
+
+    /// Remove minimal DrumGizmo monitor test routes without killing the engine.
+    MonitorClear {
+        #[arg(long, value_enum, default_value_t = MonitorPairArg::Overheads)]
+        pair: MonitorPairArg,
+        #[arg(long, default_value = DEFAULT_MONITOR_SINK)]
+        sink: String,
+        #[arg(long, default_value_t = true, conflicts_with = "execute")]
+        dry_run: bool,
+        #[arg(long)]
+        execute: bool,
+    },
+
     /// Print the current safety policy encoded by the CLI.
     Policy,
 }
@@ -180,6 +210,19 @@ enum Kit {
 enum GraphState {
     EngineOnly,
     OverheadMonitor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum MonitorPairArg {
+    Overheads,
+}
+
+impl From<MonitorPairArg> for MonitorPair {
+    fn from(value: MonitorPairArg) -> Self {
+        match value {
+            MonitorPairArg::Overheads => Self::Overheads,
+        }
+    }
 }
 
 impl From<GraphState> for DesiredState {
@@ -286,6 +329,19 @@ fn run_result(cli: Cli) -> Result<(), String> {
         Command::GraphDump => graph_dump_command(),
         Command::GraphCheck { state } => graph_check_command(state),
         Command::Quiet { volume, sink } => quiet(&sink, &volume),
+        Command::MonitorTest {
+            pair,
+            volume,
+            sink,
+            dry_run,
+            execute,
+        } => monitor_test(pair, &sink, &volume, dry_run, execute),
+        Command::MonitorClear {
+            pair,
+            sink,
+            dry_run,
+            execute,
+        } => monitor_clear(pair, &sink, dry_run, execute),
         Command::Policy => policy(),
     }
 }
@@ -650,6 +706,101 @@ fn trace(command: TraceCommand) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+fn monitor_test(
+    pair: MonitorPairArg,
+    sink: &str,
+    volume: &str,
+    dry_run: bool,
+    execute: bool,
+) -> Result<(), String> {
+    let live = execute;
+    if !dry_run && !live {
+        return Err("use --dry-run or --execute".to_string());
+    }
+    let sink = if sink.is_empty() {
+        default_monitor_sink()
+    } else {
+        sink
+    };
+    let ops = plan_monitor(pair.into(), sink);
+    println!(
+        "polyrhythm monitor-test {}",
+        if live { "execute" } else { "dry-run" }
+    );
+    println!("pair: {pair:?}");
+    println!("sink: {sink}");
+    println!("volume: {volume}");
+    for op in &ops {
+        println!("- link {} -> {}", op.source, op.target);
+    }
+    if live {
+        quiet(sink, volume)?;
+        for result in execute_monitor(MonitorAction::Link, &ops) {
+            println!("{result}");
+        }
+        let snapshot = graph_dump().map_err(|err| format!("graph dump failed: {err}"))?;
+        print_graph_summary(&snapshot);
+        let failures = graph_check(&snapshot, DesiredState::OverheadMonitor);
+        if failures.is_empty() {
+            println!("graph-check overhead-monitor: ok");
+        } else {
+            println!("graph-check overhead-monitor: failed");
+            for failure in &failures {
+                println!("  {failure}");
+            }
+        }
+        let _ = write_event(TraceEvent::warn(
+            "monitor_test_execute",
+            format!(
+                "pair={pair:?} sink={sink} volume={volume} failures={}",
+                failures.len()
+            ),
+        ));
+    } else {
+        println!("live monitor links: skipped");
+    }
+    Ok(())
+}
+
+fn monitor_clear(
+    pair: MonitorPairArg,
+    sink: &str,
+    dry_run: bool,
+    execute: bool,
+) -> Result<(), String> {
+    let live = execute;
+    if !dry_run && !live {
+        return Err("use --dry-run or --execute".to_string());
+    }
+    let sink = if sink.is_empty() {
+        default_monitor_sink()
+    } else {
+        sink
+    };
+    let ops = plan_monitor(pair.into(), sink);
+    println!(
+        "polyrhythm monitor-clear {}",
+        if live { "execute" } else { "dry-run" }
+    );
+    for op in &ops {
+        println!("- clear {} -> {}", op.source, op.target);
+    }
+    if live {
+        for result in execute_monitor(MonitorAction::Clear, &ops) {
+            println!("{result}");
+        }
+        let snapshot = graph_dump().map_err(|err| format!("graph dump failed: {err}"))?;
+        print_graph_summary(&snapshot);
+        let _ = write_event(TraceEvent::warn(
+            "monitor_clear_execute",
+            format!("pair={pair:?} sink={sink}"),
+        ));
+    } else {
+        println!("live monitor clear: skipped");
+    }
+    Ok(())
 }
 
 fn graph_dump_command() -> Result<(), String> {

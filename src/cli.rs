@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::audio::{apply_safety, restore, MonitorSafety};
+use crate::graph::{
+    check as graph_check, dump as graph_dump, print_summary as print_graph_summary, DesiredState,
+};
 use crate::preflight::{
     has_failures, run as run_preflight, CheckStatus, PreflightConfig, PreflightReport,
 };
@@ -133,6 +136,23 @@ enum Command {
         dry_run: bool,
     },
 
+    /// Capture and summarize a bounded PipeWire graph snapshot.
+    GraphDump,
+
+    /// Check current PipeWire graph against an expected drum-rig state.
+    GraphCheck {
+        #[arg(long, value_enum)]
+        state: GraphState,
+    },
+
+    /// Lower monitor volume without killing DrumGizmo or the mapper.
+    Quiet {
+        #[arg(long, default_value = "5%")]
+        volume: String,
+        #[arg(long, default_value = DEFAULT_MONITOR_SINK)]
+        sink: String,
+    },
+
     /// Print the current safety policy encoded by the CLI.
     Policy,
 }
@@ -154,6 +174,21 @@ enum Kit {
     Crocell,
     Muldjord,
     Aasimonster,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum GraphState {
+    EngineOnly,
+    OverheadMonitor,
+}
+
+impl From<GraphState> for DesiredState {
+    fn from(value: GraphState) -> Self {
+        match value {
+            GraphState::EngineOnly => Self::EngineOnly,
+            GraphState::OverheadMonitor => Self::OverheadMonitor,
+        }
+    }
 }
 
 impl Kit {
@@ -248,6 +283,9 @@ fn run_result(cli: Cli) -> Result<(), String> {
         } => legacy_env(&monitor_sink, &monitor_volume),
         Command::Trace { command } => trace(command),
         Command::Graph { dry_run } => graph(dry_run),
+        Command::GraphDump => graph_dump_command(),
+        Command::GraphCheck { state } => graph_check_command(state),
+        Command::Quiet { volume, sink } => quiet(&sink, &volume),
         Command::Policy => policy(),
     }
 }
@@ -609,6 +647,59 @@ fn trace(command: TraceCommand) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+fn graph_dump_command() -> Result<(), String> {
+    let snapshot = graph_dump().map_err(|err| format!("graph dump failed: {err}"))?;
+    print_graph_summary(&snapshot);
+    let _ = write_event(TraceEvent::info(
+        "graph_dump",
+        format!("path={}", snapshot.path.display()),
+    ));
+    Ok(())
+}
+
+fn graph_check_command(state: GraphState) -> Result<(), String> {
+    let snapshot = graph_dump().map_err(|err| format!("graph dump failed: {err}"))?;
+    print_graph_summary(&snapshot);
+    let failures = graph_check(&snapshot, state.into());
+    if failures.is_empty() {
+        println!("graph-check: ok");
+        let _ = write_event(TraceEvent::info(
+            "graph_check_ok",
+            format!("state={state:?}"),
+        ));
+        Ok(())
+    } else {
+        println!("graph-check: failed");
+        for failure in &failures {
+            println!("  {failure}");
+        }
+        let _ = write_event(TraceEvent::error(
+            "graph_check_failed",
+            format!("state={state:?} failures={}", failures.len()),
+        ));
+        Err("graph check failed".to_string())
+    }
+}
+
+fn quiet(sink: &str, volume: &str) -> Result<(), String> {
+    println!("quiet: setting {sink} to {volume}");
+    let safety = MonitorSafety {
+        sinks: vec![sink.to_string()],
+        safety_volume: volume.to_string(),
+        restore_volume: volume.to_string(),
+        mute: false,
+    };
+    for result in apply_safety(&safety) {
+        println!("{result}");
+    }
+    println!("DrumGizmo/mapper untouched");
+    let _ = write_event(TraceEvent::warn(
+        "quiet",
+        format!("sink={sink} volume={volume}"),
+    ));
+    Ok(())
 }
 
 fn graph(dry_run: bool) -> Result<(), String> {

@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod cli;
+pub mod graph;
 pub mod preflight;
 pub mod process;
 pub mod start;

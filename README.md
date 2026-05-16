@@ -65,3 +65,16 @@ The CLI now applies a first-pass monitor safety wrapper around live start/stop:
 it drops the configured monitor sink to a low safety volume before graph churn
 and restores the configured monitor volume afterward. This is a mitigation, not
 a guarantee; keep external playback paused for live stack transitions.
+
+## Graph feedback loop
+
+Use these commands during PipeWire routing diagnostics. `quiet` is non-destructive: it lowers the monitor sink without killing DrumGizmo or the mapper.
+
+```bash
+polyrhythm start --kit drs --execute       # engine + MIDI only by default
+polyrhythm graph-dump                      # bounded pw-dump snapshot and summary
+polyrhythm graph-check --state engine-only # expected safe baseline
+polyrhythm quiet --volume 5%               # lower speakers without destroying graph evidence
+```
+
+Current desired baseline is `engine-only`: DrumGizmo running, mapper MIDI linked, and all DrumGizmo audio outputs disconnected. OBS receiving the onboard speaker monitor feed is flagged suspicious because it may participate in feedback loops.

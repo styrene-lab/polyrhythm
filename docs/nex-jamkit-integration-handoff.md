@@ -286,8 +286,10 @@ Current local implementation status after importing this handoff:
 - DrumGizmo logs are truncated on process start so stale `done` markers cannot satisfy the new load wait.
 - Later execution operations are skipped after an earlier required operation fails, so routing does not proceed after a load timeout.
 - `monitor-test` and `start --route-monitor` now plan overhead-only routes through `TD50-Safety-Bus` instead of direct DrumGizmo-to-sink links.
+- `start --route-monitor` now ensures `TD50-Safety-Bus` exists as a PipeWire/Pulse null sink before monitor links are attempted, using `pactl load-module module-null-sink` when needed.
+- The safety bus and physical monitor sink are clamped to low volume (`5%` by default) before DrumGizmo monitor links are made.
 - `graph-check --state overhead-monitor` now expects the `TD50-Safety-Bus` route shape and flags direct DrumGizmo-to-onboard-sink routes as unsafe.
 
 Known remaining gap:
 
-- `polyrhythm` does not yet create or own the PipeWire loopback/null-sink safety bus lifecycle. If `TD50-Safety-Bus` is absent, monitor execution should fail safely rather than falling back to direct speaker routing. A later pass should add explicit low-volume/muted bus creation before declaring live monitor routing complete.
+- The safety bus is created/ensured, but polyrhythm does not yet track or unload bus modules it created. That is intentionally conservative: teardown is avoided until there is stronger evidence about module ownership and live graph effects.

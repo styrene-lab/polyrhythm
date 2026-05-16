@@ -82,7 +82,7 @@ impl StartConfig {
             monitor_sinks: vec![
                 env::var("TD50_MONITOR_SINKS").unwrap_or_else(|_| DEFAULT_MONITOR_SINK.to_string())
             ],
-            monitor_volume: env::var("TD50_MONITOR_VOLUME").unwrap_or_else(|_| "75%".to_string()),
+            monitor_volume: env::var("TD50_MONITOR_VOLUME").unwrap_or_else(|_| "5%".to_string()),
         }
     }
 }
@@ -107,6 +107,10 @@ pub enum PlannedOp {
     WaitDrumGizmoLoaded {
         log: PathBuf,
         timeout_secs: u64,
+    },
+    EnsureSafetyBus {
+        name: String,
+        volume: String,
     },
     Link {
         source: String,
@@ -136,6 +140,10 @@ pub fn plan_drs(config: &StartConfig) -> Vec<PlannedOp> {
     let mut ops = Vec::new();
     ops.push(PlannedOp::StopExisting);
     if config.route_monitor {
+        ops.push(PlannedOp::EnsureSafetyBus {
+            name: config.safety_bus.clone(),
+            volume: config.monitor_volume.clone(),
+        });
         for sink in &config.monitor_sinks {
             ops.push(PlannedOp::ClampMonitorVolume {
                 sink: sink.clone(),
@@ -285,6 +293,7 @@ pub fn execute_drs(config: &StartConfig, ops: &[PlannedOp]) -> Vec<ExecutionResu
                 PlannedOp::WaitDrumGizmoLoaded { log, timeout_secs } => {
                     wait_for_drumgizmo_loaded(log, Duration::from_secs(*timeout_secs))
                 }
+                PlannedOp::EnsureSafetyBus { name, volume } => ensure_safety_bus(name, volume),
                 PlannedOp::Link {
                     source,
                     target,
@@ -325,6 +334,7 @@ pub fn is_required(op: &PlannedOp) -> bool {
         | PlannedOp::StartMapper { .. }
         | PlannedOp::StartDrumGizmo { .. }
         | PlannedOp::WaitDrumGizmoLoaded { .. }
+        | PlannedOp::EnsureSafetyBus { .. }
         | PlannedOp::WriteManifest { .. } => true,
         PlannedOp::Link { source, target, .. } => {
             target == "DrumGizmo:drumgizmo_midiin"
@@ -406,6 +416,9 @@ pub fn describe_op(op: &PlannedOp) -> String {
                 log.display()
             )
         }
+        PlannedOp::EnsureSafetyBus { name, volume } => {
+            format!("ensure safety bus {name} exists at {volume}")
+        }
         PlannedOp::Link {
             source,
             target,
@@ -413,6 +426,55 @@ pub fn describe_op(op: &PlannedOp) -> String {
         } => format!("link timeout={}s: {source} -> {target}", timeout_secs),
         PlannedOp::WriteManifest { path } => format!("write manifest: {}", path.display()),
     }
+}
+
+fn ensure_safety_bus(name: &str, volume: &str) -> ExecutionStatus {
+    if !sink_present(name) {
+        let status = Command::new("pactl")
+            .arg("load-module")
+            .arg("module-null-sink")
+            .arg(format!("sink_name={name}"))
+            .arg("channels=2")
+            .arg("channel_map=front-left,front-right")
+            .arg(format!("sink_properties=device.description={name}"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        match status {
+            Ok(status) if status.success() => {}
+            Ok(status) => {
+                return ExecutionStatus::Failed(format!(
+                    "pactl load-module module-null-sink exited with {status}"
+                ));
+            }
+            Err(err) => return ExecutionStatus::Failed(err.to_string()),
+        }
+        if !wait_for_sink_present(name, Duration::from_secs(2)) {
+            return ExecutionStatus::Failed(format!("safety bus {name} did not appear"));
+        }
+    }
+    clamp_monitor(name, volume)
+}
+
+fn sink_present(name: &str) -> bool {
+    Command::new("pactl")
+        .args(["list", "short", "sinks"])
+        .stdin(Stdio::null())
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).contains(name))
+        .unwrap_or(false)
+}
+
+fn wait_for_sink_present(name: &str, timeout: Duration) -> bool {
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        if sink_present(name) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    false
 }
 
 fn clamp_monitor(sink: &str, volume: &str) -> ExecutionStatus {
@@ -697,6 +759,23 @@ mod tests {
         assert!(command.iter().any(|arg| arg == "-a"));
         assert!(command.iter().any(|arg| arg == "-s"));
         assert!(command.iter().any(|arg| arg == "-S"));
+    }
+
+    #[test]
+    fn route_monitor_ensures_safety_bus_before_links() {
+        let mut config =
+            StartConfig::drs_default(PathBuf::from("/home/test"), PathBuf::from("/repo"));
+        config.route_monitor = true;
+        let ops = plan_drs(&config);
+        let ensure_index = ops
+            .iter()
+            .position(|op| matches!(op, PlannedOp::EnsureSafetyBus { .. }))
+            .unwrap();
+        let first_monitor_link_index = ops
+            .iter()
+            .position(|op| matches!(op, PlannedOp::Link { source, .. } if source.starts_with("DrumGizmo:")))
+            .unwrap();
+        assert!(ensure_index < first_monitor_link_index);
     }
 
     #[test]

@@ -52,7 +52,7 @@ enum Command {
         route_monitor: bool,
         #[arg(long, default_value = DEFAULT_MONITOR_SINK)]
         monitor_sink: String,
-        #[arg(long, default_value = "75%")]
+        #[arg(long, default_value = "5%")]
         monitor_volume: String,
         #[arg(long, default_value_t = false)]
         streaming: bool,
@@ -130,7 +130,7 @@ enum Command {
     LegacyEnv {
         #[arg(long, default_value = DEFAULT_MONITOR_SINK)]
         monitor_sink: String,
-        #[arg(long, default_value = "75%")]
+        #[arg(long, default_value = "5%")]
         monitor_volume: String,
     },
 

@@ -413,8 +413,11 @@ fn start_command(
     }
 
     if live {
-        let safety_config =
-            MonitorSafety::new(config.monitor_sinks.clone(), config.monitor_volume.clone());
+        let safety_config = if config.route_monitor {
+            MonitorSafety::new(config.monitor_sinks.clone(), config.monitor_volume.clone())
+        } else {
+            MonitorSafety::new(config.monitor_sinks.clone(), "5%".to_string())
+        };
         for action in apply_safety(&safety_config) {
             println!("{action}");
         }
@@ -595,7 +598,7 @@ fn status(strict: bool) -> Result<(), String> {
 fn stop_command(dry_run: bool, force: bool, safety: bool) -> Result<(), String> {
     let cache = cache_dir();
     let safety_config =
-        MonitorSafety::new(vec![DEFAULT_MONITOR_SINK.to_string()], "75%".to_string());
+        MonitorSafety::new(vec![DEFAULT_MONITOR_SINK.to_string()], "5%".to_string());
     if safety && !dry_run {
         for action in apply_safety(&safety_config) {
             println!("{action}");

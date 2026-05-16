@@ -517,7 +517,9 @@ fn start_command(
         let safety_config = if config.route_monitor {
             MonitorSafety::new(config.monitor_sinks.clone(), config.monitor_volume.clone())
         } else {
-            MonitorSafety::new(config.monitor_sinks.clone(), "50%".to_string())
+            let restore_volume =
+                env::var("TD50_MONITOR_VOLUME").unwrap_or_else(|_| "50%".to_string());
+            MonitorSafety::new(config.monitor_sinks.clone(), restore_volume)
         };
         for action in apply_safety(&safety_config) {
             println!("{action}");

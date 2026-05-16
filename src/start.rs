@@ -65,7 +65,7 @@ impl StartConfig {
                 .ok()
                 .and_then(|raw| raw.parse().ok())
                 .unwrap_or(DEFAULT_STREAM_LIMIT),
-            route_monitor: true,
+            route_monitor: false,
             route_obs: false,
             monitor_sinks: vec![
                 env::var("TD50_MONITOR_SINKS").unwrap_or_else(|_| DEFAULT_MONITOR_SINK.to_string())

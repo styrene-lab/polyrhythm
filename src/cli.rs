@@ -41,7 +41,7 @@ enum Command {
         allow_experimental: bool,
         #[arg(long, default_value_t = false)]
         route_obs: bool,
-        #[arg(long, default_value_t = true)]
+        #[arg(long, default_value_t = false)]
         route_monitor: bool,
         #[arg(long, default_value = DEFAULT_MONITOR_SINK)]
         monitor_sink: String,
@@ -65,7 +65,7 @@ enum Command {
         dry_run: bool,
         #[arg(long)]
         execute: bool,
-        #[arg(long, default_value_t = true)]
+        #[arg(long, default_value_t = false)]
         route_monitor: bool,
         #[arg(long, default_value_t = false)]
         route_obs: bool,
@@ -81,7 +81,7 @@ enum Command {
         dry_run: bool,
         #[arg(long)]
         execute: bool,
-        #[arg(long, default_value_t = true)]
+        #[arg(long, default_value_t = false)]
         route_monitor: bool,
         #[arg(long, default_value_t = false)]
         route_obs: bool,

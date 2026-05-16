@@ -6,10 +6,11 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::monitor;
 use crate::process::{stop, StopOptions};
 
 const DEFAULT_MONITOR_SINK: &str = "alsa_output.pci-0000_0e_00.4.analog-stereo";
-const DEFAULT_SAMPLE_PARAMS: &str = "close=1.0,diverse=0.12,random=0.02";
+const DEFAULT_SAMPLE_PARAMS: &str = "close=0.10,diverse=0.12,random=0.02";
 const DEFAULT_STREAM_LIMIT: u64 = 67_108_864;
 const DEFAULT_LOAD_TIMEOUT_SECS: u64 = 90;
 const DEFAULT_SAFETY_BUS: &str = "TD50-Safety-Bus";
@@ -82,7 +83,7 @@ impl StartConfig {
             monitor_sinks: vec![
                 env::var("TD50_MONITOR_SINKS").unwrap_or_else(|_| DEFAULT_MONITOR_SINK.to_string())
             ],
-            monitor_volume: env::var("TD50_MONITOR_VOLUME").unwrap_or_else(|_| "5%".to_string()),
+            monitor_volume: env::var("TD50_MONITOR_VOLUME").unwrap_or_else(|_| "50%".to_string()),
         }
     }
 }
@@ -236,26 +237,14 @@ fn drumgizmo_command(config: &StartConfig) -> Vec<String> {
     command
 }
 
-fn monitor_links(safety_bus: &str, sinks: &[String]) -> Vec<(String, String)> {
-    let mut links = vec![
-        (
-            "DrumGizmo:5-OHL".to_string(),
-            format!("{safety_bus}:playback_FL"),
-        ),
-        (
-            "DrumGizmo:6-OHR".to_string(),
-            format!("{safety_bus}:playback_FR"),
-        ),
-    ];
+fn monitor_links(_safety_bus: &str, sinks: &[String]) -> Vec<(String, String)> {
+    let mut links = Vec::new();
     for sink in sinks {
-        links.push((
-            format!("{safety_bus}:monitor_FL"),
-            format!("{sink}:playback_FL"),
-        ));
-        links.push((
-            format!("{safety_bus}:monitor_FR"),
-            format!("{sink}:playback_FR"),
-        ));
+        links.extend(
+            monitor::plan(monitor::MonitorPair::FullKit, sink)
+                .into_iter()
+                .map(|op| (op.source, op.target)),
+        );
     }
     links
 }
@@ -762,24 +751,24 @@ mod tests {
     }
 
     #[test]
-    fn route_monitor_ensures_safety_bus_before_links() {
+    fn route_monitor_clamps_sink_before_direct_low_volume_links() {
         let mut config =
             StartConfig::drs_default(PathBuf::from("/home/test"), PathBuf::from("/repo"));
         config.route_monitor = true;
         let ops = plan_drs(&config);
-        let ensure_index = ops
+        let clamp_index = ops
             .iter()
-            .position(|op| matches!(op, PlannedOp::EnsureSafetyBus { .. }))
+            .position(|op| matches!(op, PlannedOp::ClampMonitorVolume { .. }))
             .unwrap();
         let first_monitor_link_index = ops
             .iter()
-            .position(|op| matches!(op, PlannedOp::Link { source, .. } if source.starts_with("DrumGizmo:")))
+            .position(|op| matches!(op, PlannedOp::Link { source, target, .. } if source.starts_with("DrumGizmo:") && target.starts_with(DEFAULT_MONITOR_SINK)))
             .unwrap();
-        assert!(ensure_index < first_monitor_link_index);
+        assert!(clamp_index < first_monitor_link_index);
     }
 
     #[test]
-    fn monitor_routes_use_safety_bus_not_direct_sink() {
+    fn monitor_routes_use_direct_low_volume_sink_not_safety_bus() {
         let mut config =
             StartConfig::drs_default(PathBuf::from("/home/test"), PathBuf::from("/repo"));
         config.route_monitor = true;
@@ -795,10 +784,10 @@ mod tests {
             .collect();
         assert!(monitor_targets
             .iter()
-            .any(|target| target.starts_with("TD50-Safety-Bus:")));
+            .any(|target| target.starts_with(DEFAULT_MONITOR_SINK)));
         assert!(!monitor_targets
             .iter()
-            .any(|target| target.starts_with(DEFAULT_MONITOR_SINK)));
+            .any(|target| target.starts_with("TD50-Safety-Bus:")));
     }
 
     #[test]

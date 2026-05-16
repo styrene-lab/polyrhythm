@@ -3,7 +3,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const DEFAULT_SINK: &str = "alsa_output.pci-0000_0e_00.4.analog-stereo";
-const DEFAULT_SAFETY_BUS: &str = "TD50-Safety-Bus";
 const OVERHEAD_LEFT: &str = "DrumGizmo:5-OHL";
 const OVERHEAD_RIGHT: &str = "DrumGizmo:6-OHR";
 const PLAYBACK_LEFT: &str = "playback_FL";
@@ -12,6 +11,7 @@ const PLAYBACK_RIGHT: &str = "playback_FR";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MonitorPair {
     Overheads,
+    FullKit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,16 +33,10 @@ pub enum MonitorSetupOp {
 }
 
 pub fn setup_plan(sink: &str, volume: &str) -> Vec<MonitorSetupOp> {
-    vec![
-        MonitorSetupOp::EnsureSafetyBus {
-            name: DEFAULT_SAFETY_BUS.to_string(),
-            volume: volume.to_string(),
-        },
-        MonitorSetupOp::ClampMonitor {
-            sink: sink.to_string(),
-            volume: volume.to_string(),
-        },
-    ]
+    vec![MonitorSetupOp::ClampMonitor {
+        sink: sink.to_string(),
+        volume: volume.to_string(),
+    }]
 }
 
 pub fn describe_setup_op(op: &MonitorSetupOp) -> String {
@@ -81,22 +75,66 @@ pub fn plan(pair: MonitorPair, sink: &str) -> Vec<MonitorOp> {
         MonitorPair::Overheads => vec![
             MonitorOp {
                 source: OVERHEAD_LEFT.to_string(),
-                target: format!("{DEFAULT_SAFETY_BUS}:{PLAYBACK_LEFT}"),
-            },
-            MonitorOp {
-                source: OVERHEAD_RIGHT.to_string(),
-                target: format!("{DEFAULT_SAFETY_BUS}:{PLAYBACK_RIGHT}"),
-            },
-            MonitorOp {
-                source: format!("{DEFAULT_SAFETY_BUS}:monitor_FL"),
                 target: format!("{sink}:{PLAYBACK_LEFT}"),
             },
             MonitorOp {
-                source: format!("{DEFAULT_SAFETY_BUS}:monitor_FR"),
+                source: OVERHEAD_RIGHT.to_string(),
                 target: format!("{sink}:{PLAYBACK_RIGHT}"),
             },
         ],
+        MonitorPair::FullKit => full_kit_plan(sink),
     }
+}
+
+fn stereo(source: &str, sink: &str) -> Vec<MonitorOp> {
+    vec![
+        MonitorOp {
+            source: source.to_string(),
+            target: format!("{sink}:{PLAYBACK_LEFT}"),
+        },
+        MonitorOp {
+            source: source.to_string(),
+            target: format!("{sink}:{PLAYBACK_RIGHT}"),
+        },
+    ]
+}
+
+fn full_kit_plan(sink: &str) -> Vec<MonitorOp> {
+    let mut ops = Vec::new();
+    ops.push(MonitorOp {
+        source: "DrumGizmo:5-OHL".to_string(),
+        target: format!("{sink}:{PLAYBACK_LEFT}"),
+    });
+    ops.push(MonitorOp {
+        source: "DrumGizmo:6-OHR".to_string(),
+        target: format!("{sink}:{PLAYBACK_RIGHT}"),
+    });
+    for source in [
+        "DrumGizmo:2-Kdrum_back",
+        "DrumGizmo:3-Kdrum_front",
+        "DrumGizmo:8-Snare_bottom",
+        "DrumGizmo:9-Snare_top",
+    ] {
+        ops.extend(stereo(source, sink));
+    }
+    ops.push(MonitorOp {
+        source: "DrumGizmo:4-Hihat".to_string(),
+        target: format!("{sink}:{PLAYBACK_LEFT}"),
+    });
+    ops.push(MonitorOp {
+        source: "DrumGizmo:7-Ride".to_string(),
+        target: format!("{sink}:{PLAYBACK_RIGHT}"),
+    });
+    ops.push(MonitorOp {
+        source: "DrumGizmo:10-Tom1".to_string(),
+        target: format!("{sink}:{PLAYBACK_LEFT}"),
+    });
+    ops.extend(stereo("DrumGizmo:11-Tom2", sink));
+    ops.push(MonitorOp {
+        source: "DrumGizmo:12-Tom3".to_string(),
+        target: format!("{sink}:{PLAYBACK_RIGHT}"),
+    });
+    ops
 }
 
 pub fn execute(action: MonitorAction, ops: &[MonitorOp]) -> Vec<String> {
@@ -219,29 +257,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn setup_plan_ensures_bus_before_clamping_sink() {
-        let ops = setup_plan(DEFAULT_SINK, "5%");
+    fn setup_plan_clamps_sink_for_direct_monitor_probe() {
+        let ops = setup_plan(DEFAULT_SINK, "50%");
+        assert_eq!(ops.len(), 1);
         assert_eq!(
             describe_setup_op(&ops[0]),
-            "ensure safety bus TD50-Safety-Bus exists at 5%"
-        );
-        assert_eq!(
-            describe_setup_op(&ops[1]),
-            format!("clamp monitor {DEFAULT_SINK} to 5%")
+            format!("clamp monitor {DEFAULT_SINK} to 50%")
         );
     }
 
     #[test]
-    fn overhead_plan_routes_through_safety_bus() {
+    fn overhead_plan_routes_direct_to_sink() {
         let ops = plan(MonitorPair::Overheads, DEFAULT_SINK);
-        assert_eq!(ops.len(), 4);
+        assert_eq!(ops.len(), 2);
         assert_eq!(ops[0].source, "DrumGizmo:5-OHL");
-        assert_eq!(ops[0].target, "TD50-Safety-Bus:playback_FL");
+        assert_eq!(ops[0].target, format!("{DEFAULT_SINK}:playback_FL"));
         assert_eq!(ops[1].source, "DrumGizmo:6-OHR");
-        assert_eq!(ops[1].target, "TD50-Safety-Bus:playback_FR");
-        assert_eq!(ops[2].source, "TD50-Safety-Bus:monitor_FL");
-        assert_eq!(ops[2].target, format!("{DEFAULT_SINK}:playback_FL"));
-        assert_eq!(ops[3].source, "TD50-Safety-Bus:monitor_FR");
-        assert_eq!(ops[3].target, format!("{DEFAULT_SINK}:playback_FR"));
+        assert_eq!(ops[1].target, format!("{DEFAULT_SINK}:playback_FR"));
+    }
+
+    #[test]
+    fn full_kit_plan_routes_close_mics_at_low_volume() {
+        let ops = plan(MonitorPair::FullKit, DEFAULT_SINK);
+        assert!(ops.len() > 2);
+        assert!(ops.iter().any(|op| op.source == "DrumGizmo:2-Kdrum_back"));
+        assert!(ops.iter().any(|op| op.source == "DrumGizmo:9-Snare_top"));
+        assert!(ops.iter().all(|op| op.target.starts_with(DEFAULT_SINK)));
     }
 }

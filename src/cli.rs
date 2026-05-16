@@ -159,17 +159,17 @@ enum Command {
 
     /// Lower monitor volume without killing DrumGizmo or the mapper.
     Quiet {
-        #[arg(long, default_value = "5%")]
+        #[arg(long, default_value = "50%")]
         volume: String,
         #[arg(long, default_value = DEFAULT_MONITOR_SINK)]
         sink: String,
     },
 
-    /// Add a minimal DrumGizmo monitor route. Dry-run by default.
+    /// Add a proven-good full-kit DrumGizmo monitor route. Dry-run by default.
     MonitorTest {
-        #[arg(long, value_enum, default_value_t = MonitorPairArg::Overheads)]
+        #[arg(long, value_enum, default_value_t = MonitorPairArg::FullKit)]
         pair: MonitorPairArg,
-        #[arg(long, default_value = "5%")]
+        #[arg(long, default_value = "50%")]
         volume: String,
         #[arg(long, default_value = DEFAULT_MONITOR_SINK)]
         sink: String,
@@ -179,9 +179,9 @@ enum Command {
         execute: bool,
     },
 
-    /// Remove minimal DrumGizmo monitor test routes without killing the engine.
+    /// Remove low-volume DrumGizmo monitor test routes without killing the engine.
     MonitorClear {
-        #[arg(long, value_enum, default_value_t = MonitorPairArg::Overheads)]
+        #[arg(long, value_enum, default_value_t = MonitorPairArg::FullKit)]
         pair: MonitorPairArg,
         #[arg(long, default_value = DEFAULT_MONITOR_SINK)]
         sink: String,
@@ -223,12 +223,14 @@ enum GraphState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum MonitorPairArg {
     Overheads,
+    FullKit,
 }
 
 impl From<MonitorPairArg> for MonitorPair {
     fn from(value: MonitorPairArg) -> Self {
         match value {
             MonitorPairArg::Overheads => Self::Overheads,
+            MonitorPairArg::FullKit => Self::FullKit,
         }
     }
 }
@@ -406,7 +408,7 @@ fn plan(
     }
     println!("streaming: {}", config.streaming);
     println!("load timeout: {}s", config.load_timeout_secs);
-    println!("safety bus: {}", config.safety_bus);
+    println!("direct low-volume monitor: {}", route_monitor);
     println!("cache: {}", cache_dir().display());
     println!();
     for op in plan_drs(&config) {
@@ -515,7 +517,7 @@ fn start_command(
         let safety_config = if config.route_monitor {
             MonitorSafety::new(config.monitor_sinks.clone(), config.monitor_volume.clone())
         } else {
-            MonitorSafety::new(config.monitor_sinks.clone(), "5%".to_string())
+            MonitorSafety::new(config.monitor_sinks.clone(), "50%".to_string())
         };
         for action in apply_safety(&safety_config) {
             println!("{action}");
@@ -682,7 +684,7 @@ fn status(strict: bool) -> Result<(), String> {
 fn stop_command(dry_run: bool, force: bool, safety: bool) -> Result<(), String> {
     let cache = cache_dir();
     let safety_config =
-        MonitorSafety::new(vec![DEFAULT_MONITOR_SINK.to_string()], "5%".to_string());
+        MonitorSafety::new(vec![DEFAULT_MONITOR_SINK.to_string()], "50%".to_string());
     if safety && !dry_run {
         for action in apply_safety(&safety_config) {
             println!("{action}");

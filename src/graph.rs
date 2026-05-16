@@ -8,9 +8,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_STATE_DIR: &str = ".cache/polyrhythm";
 const DEFAULT_SINK: &str = "alsa_output.pci-0000_0e_00.4.analog-stereo";
-const DEFAULT_SAFETY_BUS: &str = "TD50-Safety-Bus";
 const DEFAULT_MIDI_SOURCE: &str = "Midi-Bridge:TD50-DrumGizmo-Hihat-Mapperout (capture)";
 const DEFAULT_MIDI_TARGET: &str = "DrumGizmo:drumgizmo_midiin";
+const FULL_KIT_DIRECT_SOURCES: &[&str] = &[
+    "DrumGizmo:2-Kdrum_back",
+    "DrumGizmo:3-Kdrum_front",
+    "DrumGizmo:4-Hihat",
+    "DrumGizmo:5-OHL",
+    "DrumGizmo:6-OHR",
+    "DrumGizmo:7-Ride",
+    "DrumGizmo:8-Snare_bottom",
+    "DrumGizmo:9-Snare_top",
+    "DrumGizmo:10-Tom1",
+    "DrumGizmo:11-Tom2",
+    "DrumGizmo:12-Tom3",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphSnapshot {
@@ -242,37 +254,37 @@ pub fn check(snapshot: &GraphSnapshot, desired: DesiredState) -> Vec<String> {
             failures.extend(summary.suspicious);
         }
         DesiredState::OverheadMonitor => {
-            let required_drum_to_bus = [
-                format!("DrumGizmo:5-OHL -> {DEFAULT_SAFETY_BUS}:playback_FL"),
-                format!("DrumGizmo:6-OHR -> {DEFAULT_SAFETY_BUS}:playback_FR"),
-            ];
-            for route in required_drum_to_bus {
+            for source in FULL_KIT_DIRECT_SOURCES {
                 if !summary
                     .drumgizmo_audio_connections
                     .iter()
-                    .any(|input| input == &route)
+                    .any(|route| route.starts_with(&format!("{source} -> {DEFAULT_SINK}:")))
                 {
-                    failures.push(format!("missing overhead safety-bus route: {route}"));
-                }
-            }
-            let required_bus_to_sink = [
-                format!("{DEFAULT_SAFETY_BUS}:monitor_FL -> {DEFAULT_SINK}:playback_FL"),
-                format!("{DEFAULT_SAFETY_BUS}:monitor_FR -> {DEFAULT_SINK}:playback_FR"),
-            ];
-            for route in required_bus_to_sink {
-                if !summary.sink_inputs.iter().any(|input| input == &route) {
-                    failures.push(format!("missing safety-bus monitor route: {route}"));
+                    failures.push(format!(
+                        "missing direct low-volume monitor source: {source}"
+                    ));
                 }
             }
             for route in &summary.drumgizmo_audio_connections {
-                if !route.starts_with("DrumGizmo:5-OHL -> TD50-Safety-Bus:")
-                    && !route.starts_with("DrumGizmo:6-OHR -> TD50-Safety-Bus:")
+                if route.contains("TD50-Safety-Bus") {
+                    failures.push(format!(
+                        "unexpected safety-bus route during direct monitor probe: {route}"
+                    ));
+                }
+                if !FULL_KIT_DIRECT_SOURCES
+                    .iter()
+                    .any(|source| route.starts_with(&format!("{source} -> {DEFAULT_SINK}:")))
                 {
                     failures.push(format!("unexpected DrumGizmo monitor route: {route}"));
                 }
-                if route.contains(&format!("-> {DEFAULT_SINK}:")) {
-                    failures.push(format!("unsafe direct DrumGizmo sink route: {route}"));
-                }
+            }
+            if !summary
+                .sink_inputs
+                .iter()
+                .any(|route| route.starts_with("DrumGizmo:"))
+            {
+                failures
+                    .push("expected DrumGizmo direct sink inputs for monitor probe".to_string());
             }
         }
     }

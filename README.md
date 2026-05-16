@@ -58,3 +58,8 @@ Near-term safety wrapper work should mute or clamp monitor-facing sources before
 feedback-prone operations, then restore only the intended onboard monitor path.
 Until that exists, keep playback paused and monitor volume conservative before
 `polyrhythm start --execute`, `polyrhythm stop`, or kit switching.
+
+The CLI now applies a first-pass monitor safety wrapper around live start/stop:
+it drops the configured monitor sink to a low safety volume before graph churn
+and restores the configured monitor volume afterward. This is a mitigation, not
+a guarantee; keep external playback paused for live stack transitions.

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+use crate::audio::{apply_safety, restore, MonitorSafety};
 use crate::preflight::{
     has_failures, run as run_preflight, CheckStatus, PreflightConfig, PreflightReport,
 };
@@ -90,6 +91,8 @@ enum Command {
         dry_run: bool,
         #[arg(long)]
         force: bool,
+        #[arg(long, default_value_t = true)]
+        safety: bool,
     },
 
     /// Print environment variables needed to run the legacy DRS shell path safely.
@@ -193,7 +196,11 @@ fn run_result(cli: Cli) -> Result<(), String> {
             allow_experimental,
         } => preflight(kit, allow_experimental),
         Command::Status { strict } => status(strict),
-        Command::Stop { dry_run, force } => stop_command(dry_run, force),
+        Command::Stop {
+            dry_run,
+            force,
+            safety,
+        } => stop_command(dry_run, force, safety),
         Command::LegacyEnv {
             monitor_sink,
             monitor_volume,
@@ -326,6 +333,11 @@ fn start_command(
     }
 
     if live {
+        let safety_config =
+            MonitorSafety::new(config.monitor_sinks.clone(), config.monitor_volume.clone());
+        for action in apply_safety(&safety_config) {
+            println!("{action}");
+        }
         let results = execute_drs(&config, &ops);
         for result in &results {
             let status = match &result.status {
@@ -334,6 +346,9 @@ fn start_command(
                 ExecutionStatus::Skipped(reason) => format!("skipped: {reason}"),
             };
             println!("{status}: {}", result.description);
+        }
+        for action in restore(&safety_config) {
+            println!("{action}");
         }
         println!("PipeWire graph probing: skipped");
         let failed = results
@@ -453,8 +468,15 @@ fn status(strict: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn stop_command(dry_run: bool, force: bool) -> Result<(), String> {
+fn stop_command(dry_run: bool, force: bool, safety: bool) -> Result<(), String> {
     let cache = cache_dir();
+    let safety_config =
+        MonitorSafety::new(vec![DEFAULT_MONITOR_SINK.to_string()], "75%".to_string());
+    if safety && !dry_run {
+        for action in apply_safety(&safety_config) {
+            println!("{action}");
+        }
+    }
     let actions = stop(&cache, StopOptions { dry_run, force })
         .map_err(|err| format!("failed to stop TD-50 clients: {err}"))?;
     println!("polyrhythm stop");

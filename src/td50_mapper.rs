@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 pub const DRS_EMITTED_NOTES: &[u8] = &[
-    26, 27, 35, 36, 37, 38, 41, 42, 43, 44, 45, 46, 48, 49, 51, 55, 57, 80, 81, 82, 90, 91, 92,
+    35, 36, 37, 38, 41, 42, 43, 44, 45, 46, 48, 51, 57, 80, 81, 82, 90, 91, 92,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,11 +65,15 @@ impl MapperState {
 
     pub fn map_event(&mut self, event: MidiEvent) -> Vec<MidiEvent> {
         match event {
-            MidiEvent::Controller { param: 4, value, .. } => {
+            MidiEvent::Controller {
+                param: 4, value, ..
+            } => {
                 self.cc4 = value;
                 Vec::new()
             }
-            MidiEvent::Controller { param: 18, value, .. } => {
+            MidiEvent::Controller {
+                param: 18, value, ..
+            } => {
                 self.cc18 = value;
                 Vec::new()
             }
@@ -282,14 +286,24 @@ mod tests {
     #[test]
     fn crash1_suppresses_companion_noteons_once_each() {
         let mut state = MapperState::default();
-        assert_eq!(state.map_event(MidiEvent::Controller { channel: 0, param: 18, value: 96 }), vec![]);
+        assert_eq!(
+            state.map_event(MidiEvent::Controller {
+                channel: 0,
+                param: 18,
+                value: 96
+            }),
+            vec![]
+        );
         assert_eq!(state.map_event(note_on(27, 80)), vec![note_on(81, 80)]);
         assert_eq!(state.pending_suppression(), (true, true));
         assert_eq!(state.map_event(note_on(49, 70)), vec![]);
         assert_eq!(state.pending_suppression(), (false, true));
         assert_eq!(state.map_event(note_on(55, 70)), vec![]);
         assert_eq!(state.pending_suppression(), (false, false));
-        assert_eq!(state.map_event(note_on(49, 70)), vec![note_on(49, map_velocity(70))]);
+        assert_eq!(
+            state.map_event(note_on(49, 70)),
+            vec![note_on(49, map_velocity(70))]
+        );
     }
 
     #[test]

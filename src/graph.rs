@@ -205,11 +205,6 @@ pub fn summarize(snapshot: &GraphSnapshot) -> GraphSummary {
     }
 
     let mut suspicious = Vec::new();
-    for input in &sink_inputs {
-        if input.starts_with("DrumGizmo:") {
-            suspicious.push(format!("DrumGizmo is connected to speaker sink: {input}"));
-        }
-    }
     for input in &obs_inputs {
         if input.starts_with(&format!("{DEFAULT_SINK}:monitor_")) {
             suspicious.push(format!("OBS is receiving speaker monitor feed: {input}"));
@@ -243,6 +238,7 @@ pub fn check(snapshot: &GraphSnapshot, desired: DesiredState) -> Vec<String> {
                     summary.drumgizmo_audio_connections.join("; ")
                 ));
             }
+            failures.extend(summary.suspicious);
         }
         DesiredState::OverheadMonitor => {
             let required = [
@@ -261,7 +257,6 @@ pub fn check(snapshot: &GraphSnapshot, desired: DesiredState) -> Vec<String> {
             }
         }
     }
-    failures.extend(summary.suspicious);
     failures
 }
 

@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::preflight::{has_failures, run as run_preflight, CheckStatus, PreflightConfig};
 use crate::process::{pid_statuses, stop, ProcessState, StopOptions};
+use crate::start::{describe_op, plan_drs, write_manifest, StartConfig};
 use crate::td50_mapper::{mapped_notes_from_midimap, DRS_EMITTED_NOTES};
 use crate::trace::{tail as trace_tail, trace_path, write_event, TraceEvent};
 
@@ -47,6 +48,20 @@ enum Command {
     Doctor {
         #[arg(long, default_value = "assets/drumgizmo/DRSKit/Midimap_td50.xml")]
         drs_midimap: PathBuf,
+    },
+
+    /// Plan a safe DRS start and write a dry-run manifest.
+    Start {
+        #[arg(long, value_enum, default_value_t = Kit::Drs)]
+        kit: Kit,
+        #[arg(long)]
+        allow_experimental: bool,
+        #[arg(long, default_value_t = true)]
+        dry_run: bool,
+        #[arg(long, default_value_t = true)]
+        route_monitor: bool,
+        #[arg(long, default_value_t = false)]
+        route_obs: bool,
     },
 
     /// Run preflight checks for the known DRS path without starting live audio clients.
@@ -149,6 +164,13 @@ fn run_result(cli: Cli) -> Result<(), String> {
             &monitor_volume,
         ),
         Command::Doctor { drs_midimap } => doctor(&drs_midimap),
+        Command::Start {
+            kit,
+            allow_experimental,
+            dry_run,
+            route_monitor,
+            route_obs,
+        } => start_command(kit, allow_experimental, dry_run, route_monitor, route_obs),
         Command::Preflight {
             kit,
             allow_experimental,
@@ -223,6 +245,53 @@ fn doctor(drs_midimap: &Path) -> Result<(), String> {
     println!("PipeWire graph probing: skipped");
     println!("ALSA client probing: skipped");
     let _ = write_event(TraceEvent::info("doctor_ok", "offline doctor passed"));
+    Ok(())
+}
+
+fn start_command(
+    kit: Kit,
+    allow_experimental: bool,
+    dry_run: bool,
+    route_monitor: bool,
+    route_obs: bool,
+) -> Result<(), String> {
+    if !dry_run {
+        return Err("live start is not implemented yet; use --dry-run".to_string());
+    }
+    if kit.is_experimental() && !allow_experimental {
+        return Err(format!(
+            "kit '{}' is blocked by default; pass --allow-experimental for isolated diagnostics",
+            kit.name()
+        ));
+    }
+    if kit != Kit::Drs {
+        return Err("first start planning pass only supports DRS".to_string());
+    }
+
+    let mut config = StartConfig::drs_default(home_dir(), repo_dir());
+    config.route_monitor = route_monitor;
+    config.route_obs = route_obs;
+    let ops = plan_drs(&config);
+    let manifest = write_manifest(&config, &ops)
+        .map_err(|err| format!("failed to write dry-run manifest: {err}"))?;
+
+    println!("polyrhythm start dry-run");
+    println!("kit: {}", kit.name());
+    println!("run_id: {}", config.run_id);
+    println!("manifest: {}", manifest.display());
+    for op in &ops {
+        println!("- {}", describe_op(op));
+    }
+    println!("live audio start: skipped");
+    println!("PipeWire graph probing: skipped");
+    let _ = write_event(TraceEvent::info(
+        "start_dry_run",
+        format!(
+            "run_id={} kit=drs manifest={}",
+            config.run_id,
+            manifest.display()
+        ),
+    ));
     Ok(())
 }
 

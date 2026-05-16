@@ -20,6 +20,7 @@ ad-hoc shell orchestration with explicit safety policy and tested MIDI mapping.
 polyrhythm policy
 polyrhythm plan --kit drs
 polyrhythm doctor
+polyrhythm start --kit drs --dry-run
 polyrhythm preflight
 polyrhythm status
 polyrhythm stop --dry-run

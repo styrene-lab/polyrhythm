@@ -29,25 +29,13 @@ impl HihatOpenness {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MapperState {
     cc4: u8,
     cc18: u8,
     suppress49: bool,
     suppress55: bool,
     pub trace: Vec<String>,
-}
-
-impl Default for MapperState {
-    fn default() -> Self {
-        Self {
-            cc4: 0,
-            cc18: 0,
-            suppress49: false,
-            suppress55: false,
-            trace: Vec::new(),
-        }
-    }
 }
 
 impl MapperState {
@@ -166,7 +154,7 @@ impl MapperState {
 }
 
 pub fn map_velocity(velocity: u8) -> u8 {
-    let v = (u16::from(velocity) * u16::from(velocity) + 126) / 127;
+    let v = (u16::from(velocity) * u16::from(velocity)).div_ceil(127);
     v.clamp(1, 127) as u8
 }
 

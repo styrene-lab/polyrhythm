@@ -388,7 +388,7 @@ fn start_command(
         println!("PipeWire graph probing: skipped");
         let failed = results
             .iter()
-            .any(|result| matches!(result.status, ExecutionStatus::Failed(_)));
+            .any(|result| result.required && matches!(result.status, ExecutionStatus::Failed(_)));
         let _ = write_event(TraceEvent::info(
             "start_execute",
             format!("run_id={} failed={failed}", config.run_id),

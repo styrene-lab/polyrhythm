@@ -105,6 +105,7 @@ pub enum PlannedOp {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionResult {
     pub description: String,
+    pub required: bool,
     pub status: ExecutionStatus,
 }
 
@@ -118,7 +119,6 @@ pub enum ExecutionStatus {
 pub fn plan_drs(config: &StartConfig) -> Vec<PlannedOp> {
     let mut ops = Vec::new();
     ops.push(PlannedOp::StopExisting);
-
     if config.route_monitor {
         for sink in &config.monitor_sinks {
             ops.push(PlannedOp::ClampMonitorVolume {
@@ -127,7 +127,6 @@ pub fn plan_drs(config: &StartConfig) -> Vec<PlannedOp> {
             });
         }
     }
-
     ops.push(PlannedOp::StartMapper {
         command: vec![
             config.mapper_bin.display().to_string(),
@@ -140,7 +139,6 @@ pub fn plan_drs(config: &StartConfig) -> Vec<PlannedOp> {
         pidfile: config.cache_dir.join("hihat-mapper.pid"),
         log: config.cache_dir.join("hihat-mapper.log"),
     });
-
     ops.push(PlannedOp::StartDrumGizmo {
         command: vec![
             config.drumgizmo_bin.clone(),
@@ -161,7 +159,6 @@ pub fn plan_drs(config: &StartConfig) -> Vec<PlannedOp> {
         pidfile: config.cache_dir.join("drumgizmo.pid"),
         log: config.cache_dir.join("drumgizmo.log"),
     });
-
     ops.push(PlannedOp::Link {
         source: "Midi-Bridge:TD50-DrumGizmo-Hihat-Mapperout (capture)".to_string(),
         target: "DrumGizmo:drumgizmo_midiin".to_string(),
@@ -172,40 +169,17 @@ pub fn plan_drs(config: &StartConfig) -> Vec<PlannedOp> {
         target: "DrumGizmo:midi_in".to_string(),
         timeout_secs: 1,
     });
-
     if config.route_monitor {
         for sink in &config.monitor_sinks {
-            ops.push(PlannedOp::Link {
-                source: "DrumGizmo:5-OHL".to_string(),
-                target: format!("{sink}:playback_FL"),
-                timeout_secs: 1,
-            });
-            ops.push(PlannedOp::Link {
-                source: "DrumGizmo:6-OHR".to_string(),
-                target: format!("{sink}:playback_FR"),
-                timeout_secs: 1,
-            });
-            for channel in [
-                "DrumGizmo:2-Kdrum_back",
-                "DrumGizmo:3-Kdrum_front",
-                "DrumGizmo:4-Hihat",
-                "DrumGizmo:8-Snare_bottom",
-                "DrumGizmo:9-Snare_top",
-            ] {
+            for (source, target_suffix) in monitor_links() {
                 ops.push(PlannedOp::Link {
-                    source: channel.to_string(),
-                    target: format!("{sink}:playback_FL"),
-                    timeout_secs: 1,
-                });
-                ops.push(PlannedOp::Link {
-                    source: channel.to_string(),
-                    target: format!("{sink}:playback_FR"),
+                    source: source.to_string(),
+                    target: format!("{sink}:{target_suffix}"),
                     timeout_secs: 1,
                 });
             }
         }
     }
-
     if config.route_obs {
         ops.push(PlannedOp::Link {
             source: "DrumGizmo:5-OHL".to_string(),
@@ -218,17 +192,32 @@ pub fn plan_drs(config: &StartConfig) -> Vec<PlannedOp> {
             timeout_secs: 1,
         });
     }
-
     ops.push(PlannedOp::WriteManifest {
         path: manifest_path(config),
     });
     ops
 }
 
+fn monitor_links() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("DrumGizmo:5-OHL", "playback_FL"),
+        ("DrumGizmo:6-OHR", "playback_FR"),
+        ("DrumGizmo:2-Kdrum_back", "playback_FL"),
+        ("DrumGizmo:2-Kdrum_back", "playback_FR"),
+        ("DrumGizmo:3-Kdrum_front", "playback_FL"),
+        ("DrumGizmo:3-Kdrum_front", "playback_FR"),
+        ("DrumGizmo:4-Hihat", "playback_FL"),
+        ("DrumGizmo:4-Hihat", "playback_FR"),
+        ("DrumGizmo:8-Snare_bottom", "playback_FL"),
+        ("DrumGizmo:8-Snare_bottom", "playback_FR"),
+        ("DrumGizmo:9-Snare_top", "playback_FL"),
+        ("DrumGizmo:9-Snare_top", "playback_FR"),
+    ]
+}
+
 pub fn execute_drs(config: &StartConfig, ops: &[PlannedOp]) -> Vec<ExecutionResult> {
     let mut results = Vec::new();
     let _ = fs::create_dir_all(&config.cache_dir);
-
     for op in ops {
         let description = describe_op(op);
         let status = match op {
@@ -257,27 +246,72 @@ pub fn execute_drs(config: &StartConfig, ops: &[PlannedOp]) -> Vec<ExecutionResu
                 target,
                 timeout_secs,
             } => link(source, target, *timeout_secs),
-            PlannedOp::WriteManifest { .. } => write_manifest(config, ops)
-                .map(|_| ExecutionStatus::Ok)
-                .unwrap_or_else(|err| ExecutionStatus::Failed(err.to_string())),
+            PlannedOp::WriteManifest { .. } => {
+                ExecutionStatus::Skipped("written after execution results".to_string())
+            }
         };
         results.push(ExecutionResult {
             description,
+            required: is_required(op),
             status,
         });
     }
-
+    if let Some(index) = results
+        .iter()
+        .position(|result| result.description.starts_with("write manifest:"))
+    {
+        results[index].status = write_manifest_with_results(config, ops, &results)
+            .map(|_| ExecutionStatus::Ok)
+            .unwrap_or_else(|err| ExecutionStatus::Failed(err.to_string()));
+    }
     results
 }
 
+pub fn is_required(op: &PlannedOp) -> bool {
+    match op {
+        PlannedOp::StopExisting
+        | PlannedOp::ClampMonitorVolume { .. }
+        | PlannedOp::StartMapper { .. }
+        | PlannedOp::StartDrumGizmo { .. }
+        | PlannedOp::WriteManifest { .. } => true,
+        PlannedOp::Link { source, target, .. } => {
+            target == "DrumGizmo:drumgizmo_midiin"
+                || source == "DrumGizmo:5-OHL"
+                || source == "DrumGizmo:6-OHR"
+                || source == "DrumGizmo:2-Kdrum_back"
+                || source == "DrumGizmo:3-Kdrum_front"
+                || source == "DrumGizmo:4-Hihat"
+                || source == "DrumGizmo:8-Snare_bottom"
+                || source == "DrumGizmo:9-Snare_top"
+        }
+    }
+}
+
 pub fn write_manifest(config: &StartConfig, ops: &[PlannedOp]) -> io::Result<PathBuf> {
+    write_manifest_inner(config, ops, true, None)
+}
+
+pub fn write_manifest_with_results(
+    config: &StartConfig,
+    ops: &[PlannedOp],
+    results: &[ExecutionResult],
+) -> io::Result<PathBuf> {
+    write_manifest_inner(config, ops, false, Some(results))
+}
+
+fn write_manifest_inner(
+    config: &StartConfig,
+    ops: &[PlannedOp],
+    dry_run: bool,
+    results: Option<&[ExecutionResult]>,
+) -> io::Result<PathBuf> {
     let path = manifest_path(config);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&path, manifest_json(config, ops, true))?;
-    let current = config.state_dir.join("current-run.json");
-    fs::write(current, manifest_json(config, ops, true))?;
+    let json = manifest_json(config, ops, dry_run, results);
+    fs::write(&path, &json)?;
+    fs::write(config.state_dir.join("current-run.json"), json)?;
     Ok(path)
 }
 
@@ -364,13 +398,13 @@ fn start_process(
         Ok(file) => file,
         Err(err) => return ExecutionStatus::Failed(err.to_string()),
     };
-    let child = Command::new(&command[0])
+    let mut child = match Command::new(&command[0])
         .args(&command[1..])
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(stderr))
-        .spawn();
-    let mut child = match child {
+        .spawn()
+    {
         Ok(child) => child,
         Err(err) => return ExecutionStatus::Failed(err.to_string()),
     };
@@ -408,12 +442,33 @@ fn link(source: &str, target: &str, timeout_secs: u64) -> ExecutionStatus {
     }
 }
 
-fn manifest_json(config: &StartConfig, ops: &[PlannedOp], dry_run: bool) -> String {
+fn manifest_json(
+    config: &StartConfig,
+    ops: &[PlannedOp],
+    dry_run: bool,
+    results: Option<&[ExecutionResult]>,
+) -> String {
     let ops_json = ops
         .iter()
         .map(|op| format!("\"{}\"", escape_json(&describe_op(op))))
         .collect::<Vec<_>>()
         .join(",");
+    let results_json = results
+        .map(|results| {
+            results
+                .iter()
+                .map(|result| {
+                    format!(
+                        "{{\"op\":\"{}\",\"required\":{},\"status\":\"{}\"}}",
+                        escape_json(&result.description),
+                        result.required,
+                        escape_json(&status_text(&result.status))
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
     format!(
         concat!(
             "{{\n",
@@ -429,7 +484,8 @@ fn manifest_json(config: &StartConfig, ops: &[PlannedOp], dry_run: bool) -> Stri
             "  \"route_monitor\": {},\n",
             "  \"route_obs\": {},\n",
             "  \"monitor_sinks\": [{}],\n",
-            "  \"planned_ops\": [{}]\n",
+            "  \"planned_ops\": [{}],\n",
+            "  \"results\": [{}]\n",
             "}}\n"
         ),
         escape_json(&config.run_id),
@@ -450,8 +506,17 @@ fn manifest_json(config: &StartConfig, ops: &[PlannedOp], dry_run: bool) -> Stri
             .map(|sink| format!("\"{}\"", escape_json(sink)))
             .collect::<Vec<_>>()
             .join(","),
-        ops_json
+        ops_json,
+        results_json
     )
+}
+
+fn status_text(status: &ExecutionStatus) -> String {
+    match status {
+        ExecutionStatus::Ok => "ok".to_string(),
+        ExecutionStatus::Failed(reason) => format!("failed: {reason}"),
+        ExecutionStatus::Skipped(reason) => format!("skipped: {reason}"),
+    }
 }
 
 fn run_id() -> String {
@@ -490,5 +555,15 @@ mod tests {
         assert!(ops
             .iter()
             .any(|op| matches!(op, PlannedOp::WriteManifest { .. })));
+    }
+
+    #[test]
+    fn alternate_midi_in_is_optional() {
+        let op = PlannedOp::Link {
+            source: "Midi-Bridge:TD50-DrumGizmo-Hihat-Mapperout (capture)".to_string(),
+            target: "DrumGizmo:midi_in".to_string(),
+            timeout_secs: 1,
+        };
+        assert!(!is_required(&op));
     }
 }

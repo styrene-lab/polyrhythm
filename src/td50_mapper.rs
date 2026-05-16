@@ -154,8 +154,7 @@ impl MapperState {
 }
 
 pub fn map_velocity(velocity: u8) -> u8 {
-    let v = (u16::from(velocity) * u16::from(velocity)).div_ceil(127);
-    v.clamp(1, 127) as u8
+    velocity.clamp(1, 127)
 }
 
 pub fn map_note(note: u8, cc4: u8, cc18: u8, velocity: u8) -> u8 {
@@ -309,13 +308,13 @@ mod tests {
     }
 
     #[test]
-    fn velocity_curve_matches_current_c_policy() {
+    fn velocity_curve_is_linear_for_audible_baseline() {
         assert_eq!(map_velocity(1), 1);
-        assert_eq!(map_velocity(20), 4);
-        assert_eq!(map_velocity(40), 13);
-        assert_eq!(map_velocity(64), 33);
-        assert_eq!(map_velocity(80), 51);
-        assert_eq!(map_velocity(100), 79);
+        assert_eq!(map_velocity(20), 20);
+        assert_eq!(map_velocity(40), 40);
+        assert_eq!(map_velocity(64), 64);
+        assert_eq!(map_velocity(80), 80);
+        assert_eq!(map_velocity(100), 100);
         assert_eq!(map_velocity(127), 127);
     }
 

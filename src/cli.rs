@@ -127,6 +127,12 @@ enum Command {
         command: TraceCommand,
     },
 
+    /// Open a Qt PipeWire graph viewer for manual inspection/screenshots.
+    Graph {
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+    },
+
     /// Print the current safety policy encoded by the CLI.
     Policy,
 }
@@ -241,6 +247,7 @@ fn run_result(cli: Cli) -> Result<(), String> {
             monitor_volume,
         } => legacy_env(&monitor_sink, &monitor_volume),
         Command::Trace { command } => trace(command),
+        Command::Graph { dry_run } => graph(dry_run),
         Command::Policy => policy(),
     }
 }
@@ -602,6 +609,35 @@ fn trace(command: TraceCommand) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+fn graph(dry_run: bool) -> Result<(), String> {
+    let candidates = ["qpwgraph", "helvum"];
+    let Some(tool) = candidates.iter().find(|tool| command_exists(tool)) else {
+        return Err("no PipeWire graph viewer found; install qpwgraph or helvum".to_string());
+    };
+    println!("PipeWire graph viewer: {tool}");
+    println!("This is an explicit manual visualization tool; polyrhythm automation still avoids broad graph probing.");
+    let _ = write_event(TraceEvent::info(
+        "graph",
+        format!("tool={tool} dry_run={dry_run}"),
+    ));
+    if dry_run {
+        return Ok(());
+    }
+    std::process::Command::new(tool)
+        .spawn()
+        .map_err(|err| format!("failed to launch {tool}: {err}"))?;
+    Ok(())
+}
+
+fn command_exists(command: &str) -> bool {
+    std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("command -v {} >/dev/null 2>&1", command))
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 fn policy() -> Result<(), String> {

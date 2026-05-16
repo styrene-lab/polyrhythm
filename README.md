@@ -27,6 +27,7 @@ polyrhythm status
 polyrhythm status --strict
 polyrhythm stop --dry-run
 polyrhythm trace path
+polyrhythm graph
 polyrhythm trace tail
 polyrhythm legacy-env
 ```

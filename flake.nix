@@ -46,6 +46,7 @@
               rust-analyzer
               pkg-config
               alsa-lib
+              qpwgraph
             ];
 
             shellHook = ''

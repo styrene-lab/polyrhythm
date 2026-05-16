@@ -3,10 +3,9 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::process::{pid_statuses, stop, ProcessState, StopOptions};
-
 use clap::{Parser, Subcommand, ValueEnum};
 
+use crate::process::{pid_statuses, stop, ProcessState, StopOptions};
 use crate::td50_mapper::{mapped_notes_from_midimap, DRS_EMITTED_NOTES};
 
 const DEFAULT_CACHE: &str = ".cache/td50";
@@ -46,6 +45,17 @@ enum Command {
     Doctor {
         #[arg(long, default_value = "assets/drumgizmo/DRSKit/Midimap_td50.xml")]
         drs_midimap: PathBuf,
+    },
+
+    /// Show cached TD-50 process state without PipeWire graph probing.
+    Status,
+
+    /// Stop known TD-50 clients and stuck routing commands.
+    Stop {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        force: bool,
     },
 
     /// Print environment variables needed to run the legacy DRS shell path safely.
@@ -171,6 +181,48 @@ fn doctor(drs_midimap: &Path) -> Result<(), String> {
     println!("live audio safety: ok (offline-only check)");
     println!("PipeWire graph probing: skipped");
     println!("ALSA client probing: skipped");
+    Ok(())
+}
+
+fn status() -> Result<(), String> {
+    let cache = cache_dir();
+    println!("polyrhythm status");
+    println!("cache: {}", cache.display());
+    for status in pid_statuses(&cache) {
+        let pid = status
+            .pid
+            .map(|pid| pid.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        let state = match status.state {
+            ProcessState::Running => "running",
+            ProcessState::Zombie => "zombie",
+            ProcessState::Dead => "dead",
+        };
+        println!(
+            "{}: pid={} state={} pidfile={}",
+            status.label,
+            pid,
+            state,
+            status.pidfile.display()
+        );
+    }
+    println!("PipeWire graph probing: skipped");
+    Ok(())
+}
+
+fn stop_command(dry_run: bool, force: bool) -> Result<(), String> {
+    let cache = cache_dir();
+    let actions = stop(&cache, StopOptions { dry_run, force })
+        .map_err(|err| format!("failed to stop TD-50 clients: {err}"))?;
+    println!("polyrhythm stop");
+    println!("cache: {}", cache.display());
+    for action in actions {
+        println!("{action}");
+    }
+    if dry_run {
+        println!("dry run: no processes were signaled and no pidfiles were removed");
+    }
+    println!("PipeWire/WirePlumber restart: skipped");
     Ok(())
 }
 

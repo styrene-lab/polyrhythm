@@ -256,8 +256,8 @@ pub fn check(snapshot: &GraphSnapshot, desired: DesiredState) -> Vec<String> {
                 }
             }
             let required_bus_to_sink = [
-                format!("{DEFAULT_SAFETY_BUS}.monitor:capture_FL -> {DEFAULT_SINK}:playback_FL"),
-                format!("{DEFAULT_SAFETY_BUS}.monitor:capture_FR -> {DEFAULT_SINK}:playback_FR"),
+                format!("{DEFAULT_SAFETY_BUS}:monitor_FL -> {DEFAULT_SINK}:playback_FL"),
+                format!("{DEFAULT_SAFETY_BUS}:monitor_FR -> {DEFAULT_SINK}:playback_FR"),
             ];
             for route in required_bus_to_sink {
                 if !summary.sink_inputs.iter().any(|input| input == &route) {

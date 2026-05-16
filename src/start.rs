@@ -249,11 +249,11 @@ fn monitor_links(safety_bus: &str, sinks: &[String]) -> Vec<(String, String)> {
     ];
     for sink in sinks {
         links.push((
-            format!("{safety_bus}.monitor:capture_FL"),
+            format!("{safety_bus}:monitor_FL"),
             format!("{sink}:playback_FL"),
         ));
         links.push((
-            format!("{safety_bus}.monitor:capture_FR"),
+            format!("{safety_bus}:monitor_FR"),
             format!("{sink}:playback_FR"),
         ));
     }

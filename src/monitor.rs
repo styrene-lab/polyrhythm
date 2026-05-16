@@ -88,11 +88,11 @@ pub fn plan(pair: MonitorPair, sink: &str) -> Vec<MonitorOp> {
                 target: format!("{DEFAULT_SAFETY_BUS}:{PLAYBACK_RIGHT}"),
             },
             MonitorOp {
-                source: format!("{DEFAULT_SAFETY_BUS}.monitor:capture_FL"),
+                source: format!("{DEFAULT_SAFETY_BUS}:monitor_FL"),
                 target: format!("{sink}:{PLAYBACK_LEFT}"),
             },
             MonitorOp {
-                source: format!("{DEFAULT_SAFETY_BUS}.monitor:capture_FR"),
+                source: format!("{DEFAULT_SAFETY_BUS}:monitor_FR"),
                 target: format!("{sink}:{PLAYBACK_RIGHT}"),
             },
         ],
@@ -239,9 +239,9 @@ mod tests {
         assert_eq!(ops[0].target, "TD50-Safety-Bus:playback_FL");
         assert_eq!(ops[1].source, "DrumGizmo:6-OHR");
         assert_eq!(ops[1].target, "TD50-Safety-Bus:playback_FR");
-        assert_eq!(ops[2].source, "TD50-Safety-Bus.monitor:capture_FL");
+        assert_eq!(ops[2].source, "TD50-Safety-Bus:monitor_FL");
         assert_eq!(ops[2].target, format!("{DEFAULT_SINK}:playback_FL"));
-        assert_eq!(ops[3].source, "TD50-Safety-Bus.monitor:capture_FR");
+        assert_eq!(ops[3].source, "TD50-Safety-Bus:monitor_FR");
         assert_eq!(ops[3].target, format!("{DEFAULT_SINK}:playback_FR"));
     }
 }

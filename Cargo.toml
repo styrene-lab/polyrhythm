@@ -9,7 +9,12 @@ name = "polyrhythm"
 path = "src/lib.rs"
 
 [[bin]]
+name = "polyrhythm"
+path = "src/bin/polyrhythm.rs"
+
+[[bin]]
 name = "td50-drumgizmo-hihat-mapper-rs"
 path = "src/bin/td50-drumgizmo-hihat-mapper-rs.rs"
 
 [dependencies]
+clap = { version = "4.5.53", features = ["derive"] }

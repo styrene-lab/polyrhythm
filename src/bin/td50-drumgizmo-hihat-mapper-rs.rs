@@ -60,7 +60,7 @@ struct SndSeqEvent {
     flags: u8,
     tag: u8,
     queue: u8,
-    time: [u8; 12],
+    time: [u32; 2],
     source: SndSeqAddr,
     dest: SndSeqAddr,
     data: SndSeqEventData,
@@ -203,7 +203,7 @@ fn emit(seq: *mut SndSeq, port: c_int, event: MidiEvent) {
         flags: 0,
         tag: 0,
         queue: 253,
-        time: [0; 12],
+        time: [0; 2],
         source: SndSeqAddr {
             client: 0,
             port: port as u8,

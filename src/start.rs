@@ -394,6 +394,9 @@ fn link(source: &str, target: &str, timeout_secs: u64) -> ExecutionStatus {
         .arg("pw-link")
         .arg(source)
         .arg(target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status();
     match status {
         Ok(status) if status.success() => ExecutionStatus::Ok,

@@ -23,6 +23,7 @@ polyrhythm doctor
 polyrhythm start --kit drs --dry-run
 polyrhythm preflight
 polyrhythm status
+polyrhythm status --strict
 polyrhythm stop --dry-run
 polyrhythm trace path
 polyrhythm trace tail
@@ -45,3 +46,15 @@ pidfiles, never PipeWire/WirePlumber.
   - client: `TD50-DrumGizmo-Hihat-Mapper`
   - port: `out`
 - Keep live replacement opt-in until validated against the DRS DrumGizmo path.
+
+## Known local side effects
+
+Starting or stopping the TD-50/DrumGizmo stack can cause the physical speakers to
+emit a sudden burst/blare as JACK/PipeWire routes are created, removed, or
+reconnected. This is a known side effect of live audio graph churn on the current
+rig, not evidence that broad PipeWire probing is occurring.
+
+Near-term safety wrapper work should mute or clamp monitor-facing sources before
+feedback-prone operations, then restore only the intended onboard monitor path.
+Until that exists, keep playback paused and monitor volume conservative before
+`polyrhythm start --execute`, `polyrhythm stop`, or kit switching.

@@ -79,7 +79,10 @@ enum Command {
     },
 
     /// Show cached TD-50 process state without PipeWire graph probing.
-    Status,
+    Status {
+        #[arg(long)]
+        strict: bool,
+    },
 
     /// Stop known TD-50 clients and stuck routing commands.
     Stop {
@@ -189,7 +192,7 @@ fn run_result(cli: Cli) -> Result<(), String> {
             kit,
             allow_experimental,
         } => preflight(kit, allow_experimental),
-        Command::Status => status(),
+        Command::Status { strict } => status(strict),
         Command::Stop { dry_run, force } => stop_command(dry_run, force),
         Command::LegacyEnv {
             monitor_sink,
@@ -408,11 +411,12 @@ fn print_preflight_report(kit: Kit, report: &PreflightReport) {
     println!("live audio start: skipped");
 }
 
-fn status() -> Result<(), String> {
+fn status(strict: bool) -> Result<(), String> {
     let cache = cache_dir();
     println!("polyrhythm status");
     println!("cache: {}", cache.display());
-    for status in pid_statuses(&cache) {
+    let statuses = pid_statuses(&cache);
+    for status in &statuses {
         let pid = status
             .pid
             .map(|pid| pid.to_string())
@@ -432,6 +436,20 @@ fn status() -> Result<(), String> {
     }
     println!("PipeWire graph probing: skipped");
     let _ = write_event(TraceEvent::info("status", "status inspected pidfiles"));
+    if strict {
+        let drumgizmo_ok = statuses.iter().any(|status| {
+            status.label == "drumgizmo" && matches!(status.state, ProcessState::Running)
+        });
+        let mapper_ok = statuses.iter().any(|status| {
+            status.label == "hihat mapper" && matches!(status.state, ProcessState::Running)
+        });
+        if !drumgizmo_ok || !mapper_ok {
+            return Err(format!(
+                "strict status failed: drumgizmo_running={drumgizmo_ok} mapper_running={mapper_ok}"
+            ));
+        }
+        println!("strict: ok");
+    }
     Ok(())
 }
 

@@ -967,7 +967,15 @@ fn home_dir() -> PathBuf {
 }
 
 fn repo_dir() -> PathBuf {
-    env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    env::var_os("POLYRHYTHM_REPO_DIR")
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::current_exe()
+                .ok()
+                .and_then(|path| path.parent().map(PathBuf::from))
+                .and_then(|bin| bin.parent().map(PathBuf::from))
+        })
+        .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
 
 #[cfg(test)]

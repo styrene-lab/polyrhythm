@@ -66,10 +66,9 @@ impl PreflightConfig {
                 "pactl".to_string(),
                 "timeout".to_string(),
             ],
-            mapper: home
-                .join(".local")
-                .join("bin")
-                .join("td50-drumgizmo-hihat-mapper"),
+            mapper: std::env::var_os("TD50_HIHAT_MAPPER")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| repo.join("target/debug/td50-drumgizmo-hihat-mapper-rs")),
             kit: home
                 .join(".local")
                 .join("share")

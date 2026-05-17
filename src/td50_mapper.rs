@@ -10,6 +10,7 @@ pub enum VelocityCurve {
     Linear,
     MildPunch,
     StrongPunch,
+    ExpressivePunch,
 }
 
 impl VelocityCurve {
@@ -21,6 +22,7 @@ impl VelocityCurve {
         {
             "mild" | "mild-punch" | "punch" => Self::MildPunch,
             "strong" | "strong-punch" => Self::StrongPunch,
+            "expressive" | "expressive-punch" | "dynamic-punch" => Self::ExpressivePunch,
             _ => Self::Linear,
         }
     }
@@ -30,6 +32,7 @@ impl VelocityCurve {
             Self::Linear => "linear",
             Self::MildPunch => "mild-punch",
             Self::StrongPunch => "strong-punch",
+            Self::ExpressivePunch => "expressive-punch",
         }
     }
 }
@@ -212,6 +215,11 @@ impl VelocityCurve {
             Self::Linear => velocity as u16,
             Self::MildPunch => velocity as u16 * 115 / 100 + 6,
             Self::StrongPunch => velocity as u16 * 125 / 100 + 8,
+            Self::ExpressivePunch if velocity <= 35 => velocity as u16,
+            Self::ExpressivePunch if velocity <= 95 => {
+                velocity as u16 + ((velocity as u16 - 35) * 30 / 60)
+            }
+            Self::ExpressivePunch => 125 + ((velocity as u16 - 95) * 2),
         };
         mapped.clamp(1, 127) as u8
     }
@@ -385,6 +393,19 @@ mod tests {
         assert_eq!(VelocityCurve::MildPunch.map(80), 98);
         assert_eq!(VelocityCurve::MildPunch.map(110), 127);
         assert_eq!(VelocityCurve::MildPunch.map(127), 127);
+    }
+
+    #[test]
+    fn expressive_punch_preserves_ghosts_and_lifts_backbeats() {
+        assert_eq!(VelocityCurve::ExpressivePunch.map(10), 10);
+        assert_eq!(VelocityCurve::ExpressivePunch.map(20), 20);
+        assert_eq!(VelocityCurve::ExpressivePunch.map(35), 35);
+        assert_eq!(VelocityCurve::ExpressivePunch.map(40), 42);
+        assert_eq!(VelocityCurve::ExpressivePunch.map(64), 78);
+        assert_eq!(VelocityCurve::ExpressivePunch.map(80), 102);
+        assert_eq!(VelocityCurve::ExpressivePunch.map(95), 125);
+        assert_eq!(VelocityCurve::ExpressivePunch.map(100), 127);
+        assert_eq!(VelocityCurve::ExpressivePunch.map(127), 127);
     }
 
     #[test]

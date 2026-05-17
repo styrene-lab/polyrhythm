@@ -6,7 +6,8 @@
 
 ## Hard safety rules
 
-- Do not restart PipeWire, WirePlumber, or the desktop audio stack.
+- Do not restart PipeWire, WirePlumber, or the desktop audio stack from normal controls. If recovery is required, use `polyrhythm recover-audio` so PipeWire, media clients, and COSMIC audio UI state are recovered together.
+- After any PipeWire/WirePlumber restart on COSMIC, verify with `polyrhythm audio-doctor`; `pactl`/`wpctl` health alone is not complete recovery.
 - Do not kill DrumGizmo or the mapper during graph diagnosis unless the operator explicitly asks for teardown.
 - Do not use `polyrhythm stop --force` as a diagnostic action; it destroys the graph evidence.
 - Do not route DrumGizmo audio to speakers by default.
@@ -42,6 +43,17 @@ nix develop --command cargo run --bin polyrhythm -- graph-dump
 ```
 
 Do not stop the stack unless asked.
+
+## COSMIC audio recovery loop
+
+If desktop audio loses devices or media clients go silent after a PipeWire/WirePlumber incident, use:
+
+```bash
+nix develop --command cargo run --bin polyrhythm -- recover-audio --execute
+nix develop --command cargo run --bin polyrhythm -- audio-doctor
+```
+
+This intentionally treats the audio stack as backend services plus COSMIC UI/control state plus clients. Restarting PipeWire alone is incomplete on this machine.
 
 ## Validation
 

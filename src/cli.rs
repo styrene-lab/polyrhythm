@@ -19,6 +19,11 @@ use crate::preflight::{
     has_failures, run as run_preflight, CheckStatus, PreflightConfig, PreflightReport,
 };
 use crate::process::{pid_statuses, stop, ProcessState, StopOptions};
+use crate::recovery::{
+    doctor as audio_doctor_report, recover as recover_audio_steps, RecoverAudioOptions,
+    DEFAULT_CARD as DEFAULT_AUDIO_CARD, DEFAULT_PORT as DEFAULT_AUDIO_PORT,
+    DEFAULT_SINK as DEFAULT_AUDIO_SINK, DEFAULT_SOURCE as DEFAULT_AUDIO_SOURCE,
+};
 use crate::start::{
     describe_op, execute_drs, plan_drs, write_manifest, ExecutionStatus, StartConfig,
 };
@@ -189,6 +194,36 @@ enum Command {
         dry_run: bool,
         #[arg(long)]
         execute: bool,
+    },
+
+    /// Check desktop/COSMIC audio health after PipeWire incidents.
+    AudioDoctor {
+        #[arg(long, default_value = DEFAULT_AUDIO_SINK)]
+        sink: String,
+        #[arg(long, default_value = DEFAULT_AUDIO_SOURCE)]
+        source: String,
+    },
+
+    /// Recover PipeWire, desktop audio UI, and common clients. Dry-run by default.
+    RecoverAudio {
+        #[arg(long, default_value_t = true, conflicts_with = "execute")]
+        dry_run: bool,
+        #[arg(long)]
+        execute: bool,
+        #[arg(long, default_value = DEFAULT_AUDIO_SINK)]
+        sink: String,
+        #[arg(long, default_value = DEFAULT_AUDIO_SOURCE)]
+        source: String,
+        #[arg(long, default_value = DEFAULT_AUDIO_CARD)]
+        card: String,
+        #[arg(long, default_value = DEFAULT_AUDIO_PORT)]
+        port: String,
+        #[arg(long, default_value = "15%")]
+        volume: String,
+        #[arg(long, default_value_t = true)]
+        restart_spotify: bool,
+        #[arg(long, default_value_t = true)]
+        restart_cosmic_panel: bool,
     },
 
     /// Print the current safety policy encoded by the CLI.
@@ -369,6 +404,28 @@ fn run_result(cli: Cli) -> Result<(), String> {
             dry_run,
             execute,
         } => monitor_clear(pair, &sink, dry_run, execute),
+        Command::AudioDoctor { sink, source } => audio_doctor(&sink, &source),
+        Command::RecoverAudio {
+            dry_run,
+            execute,
+            sink,
+            source,
+            card,
+            port,
+            volume,
+            restart_spotify,
+            restart_cosmic_panel,
+        } => recover_audio(
+            dry_run,
+            execute,
+            &sink,
+            &source,
+            &card,
+            &port,
+            &volume,
+            restart_spotify,
+            restart_cosmic_panel,
+        ),
         Command::Policy => policy(),
     }
 }
@@ -773,6 +830,7 @@ fn monitor_test(
         println!("- link {} -> {}", op.source, op.target);
     }
     if live {
+        guard_no_obs_speaker_monitor()?;
         let setup_results = execute_monitor_setup(&setup_ops);
         for result in &setup_results {
             println!("{result}");
@@ -884,6 +942,96 @@ fn graph_check_command(state: GraphState) -> Result<(), String> {
     }
 }
 
+fn guard_no_obs_speaker_monitor() -> Result<(), String> {
+    let snapshot = graph_dump().map_err(|err| format!("pre-monitor graph dump failed: {err}"))?;
+    let failures = graph_check(&snapshot, DesiredState::EngineOnly);
+    let obs_failures: Vec<_> = failures
+        .iter()
+        .filter(|failure| failure.contains("OBS is receiving speaker monitor feed"))
+        .collect();
+    if obs_failures.is_empty() {
+        return Ok(());
+    }
+
+    println!("pre-monitor safety guard: failed");
+    print_graph_summary(&snapshot);
+    for failure in &obs_failures {
+        println!("  {failure}");
+    }
+    let _ = write_event(TraceEvent::error(
+        "monitor_test_blocked_obs_monitor",
+        format!("failures={}", obs_failures.len()),
+    ));
+    Err("refusing live monitor routing while OBS receives the speaker monitor feed".to_string())
+}
+
+fn audio_doctor(sink: &str, source: &str) -> Result<(), String> {
+    let report = audio_doctor_report(sink, source);
+    println!("polyrhythm audio-doctor");
+    println!("sink: {sink}");
+    println!("source: {source}");
+    for check in &report.checks {
+        let status = if check.ok { "ok" } else { "fail" };
+        println!("{status}: {} — {}", check.name, check.detail);
+    }
+    if report.ok() {
+        let _ = write_event(TraceEvent::info(
+            "audio_doctor_ok",
+            "desktop audio checks passed",
+        ));
+        Ok(())
+    } else {
+        let _ = write_event(TraceEvent::error(
+            "audio_doctor_failed",
+            "one or more desktop audio checks failed",
+        ));
+        Err("audio doctor failed".to_string())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn recover_audio(
+    dry_run: bool,
+    execute: bool,
+    sink: &str,
+    source: &str,
+    card: &str,
+    port: &str,
+    volume: &str,
+    restart_spotify: bool,
+    restart_cosmic_panel: bool,
+) -> Result<(), String> {
+    let live = execute;
+    if !dry_run && !live {
+        return Err("use --dry-run or --execute".to_string());
+    }
+    let options = RecoverAudioOptions {
+        execute: live,
+        sink: sink.to_string(),
+        source: source.to_string(),
+        card: card.to_string(),
+        port: port.to_string(),
+        volume: volume.to_string(),
+        restart_spotify,
+        restart_cosmic_panel,
+    };
+    println!(
+        "polyrhythm recover-audio {}",
+        if live { "execute" } else { "dry-run" }
+    );
+    for action in recover_audio_steps(&options) {
+        println!("{action}");
+    }
+    if live {
+        audio_doctor(sink, source)?;
+    }
+    let _ = write_event(TraceEvent::warn(
+        if live { "recover_audio_execute" } else { "recover_audio_dry_run" },
+        format!("sink={sink} source={source} restart_spotify={restart_spotify} restart_cosmic_panel={restart_cosmic_panel}"),
+    ));
+    Ok(())
+}
+
 fn quiet(sink: &str, volume: &str) -> Result<(), String> {
     println!("quiet: setting {sink} to {volume}");
     let safety = MonitorSafety {
@@ -938,6 +1086,8 @@ fn policy() -> Result<(), String> {
     println!("- Alternate kits are explicit diagnostics only.");
     println!("- OBS routing is off by default.");
     println!("- Normal controls must not restart PipeWire/WirePlumber.");
+    println!("- PipeWire recovery must use recover-audio so COSMIC applet/client state is refreshed too.");
+    println!("- Live monitor routing is blocked while OBS receives the speaker monitor feed.");
     println!("- Normal controls must not run broad pw-link graph discovery.");
     println!("- The safe default monitor sink is {DEFAULT_MONITOR_SINK}.");
     println!("- The future ALSA mapper must preserve client '{DEFAULT_MAPPER_CLIENT}' and port '{DEFAULT_MAPPER_PORT}'.");

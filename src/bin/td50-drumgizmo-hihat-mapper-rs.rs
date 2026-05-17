@@ -4,7 +4,7 @@ use std::os::raw::{c_char, c_int, c_uint, c_void};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use polyrhythm::td50_mapper::{MapperState, MidiEvent};
+use polyrhythm::td50_mapper::{MapperState, MidiEvent, VelocityCurve};
 
 const SND_SEQ_OPEN_DUPLEX: c_int = 3;
 const SND_SEQ_PORT_CAP_READ: c_uint = 1 << 0;
@@ -142,11 +142,13 @@ fn run() -> Result<(), String> {
     check(port)?;
     check(unsafe { snd_seq_connect_from(seq, port, in_client, in_port) })?;
 
+    let velocity_curve = VelocityCurve::from_env();
     eprintln!(
-        "TD50-DrumGizmo-Hihat-Mapper-rs from {in_client}:{in_port}. CC4 bands: open <32, semi 32..71, closed >=72. Linear velocity."
+        "TD50-DrumGizmo-Hihat-Mapper-rs from {in_client}:{in_port}. CC4 bands: open <32, semi 32..71, closed >=72. Velocity curve: {}.",
+        velocity_curve.name()
     );
 
-    let mut mapper = MapperState::default();
+    let mut mapper = MapperState::new(velocity_curve);
     while RUNNING.load(Ordering::SeqCst) {
         let mut ev_ptr: *mut SndSeqEvent = ptr::null_mut();
         let rc = unsafe { snd_seq_event_input(seq, &mut ev_ptr) };

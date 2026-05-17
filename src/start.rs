@@ -38,6 +38,7 @@ pub struct StartConfig {
     pub route_obs: bool,
     pub monitor_sinks: Vec<String>,
     pub monitor_volume: String,
+    pub velocity_curve: String,
 }
 
 impl StartConfig {
@@ -55,7 +56,7 @@ impl StartConfig {
             midi_port: 0,
             mapper_bin: env::var_os("TD50_HIHAT_MAPPER")
                 .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".local/bin/td50-drumgizmo-hihat-mapper")),
+                .unwrap_or_else(|| repo.join("target/debug/td50-drumgizmo-hihat-mapper-rs")),
             mapper_client_name: "TD50-DrumGizmo-Hihat-Mapper".to_string(),
             mapper_port_name: "out".to_string(),
             drumgizmo_bin: "drumgizmo".to_string(),
@@ -84,6 +85,8 @@ impl StartConfig {
                 env::var("TD50_MONITOR_SINKS").unwrap_or_else(|_| DEFAULT_MONITOR_SINK.to_string())
             ],
             monitor_volume: env::var("TD50_MONITOR_VOLUME").unwrap_or_else(|_| "50%".to_string()),
+            velocity_curve: env::var("TD50_VELOCITY_CURVE")
+                .unwrap_or_else(|_| "linear".to_string()),
         }
     }
 }
@@ -154,6 +157,7 @@ pub fn plan_drs(config: &StartConfig) -> Vec<PlannedOp> {
     }
     ops.push(PlannedOp::StartMapper {
         command: vec![
+            format!("TD50_VELOCITY_CURVE={}", config.velocity_curve),
             config.mapper_bin.display().to_string(),
             config
                 .midi_client
@@ -512,13 +516,23 @@ fn start_process(
         Ok(file) => file,
         Err(err) => return ExecutionStatus::Failed(err.to_string()),
     };
-    let mut child = match Command::new(&command[0])
-        .args(&command[1..])
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(log_file))
-        .stderr(Stdio::from(stderr))
-        .spawn()
-    {
+    let child = if let Some((env_key, env_value, program_index)) = env_assignment(command) {
+        Command::new(&command[program_index])
+            .args(&command[program_index + 1..])
+            .env(env_key, env_value)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log_file))
+            .stderr(Stdio::from(stderr))
+            .spawn()
+    } else {
+        Command::new(&command[0])
+            .args(&command[1..])
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log_file))
+            .stderr(Stdio::from(stderr))
+            .spawn()
+    };
+    let mut child = match child {
         Ok(child) => child,
         Err(err) => return ExecutionStatus::Failed(err.to_string()),
     };
@@ -553,6 +567,12 @@ fn wait_for_drumgizmo_loaded(log: &PathBuf, timeout: Duration) -> ExecutionStatu
         }
         thread::sleep(Duration::from_millis(250));
     }
+}
+
+fn env_assignment(command: &[String]) -> Option<(&str, &str, usize)> {
+    let first = command.first()?;
+    let (key, value) = first.split_once('=')?;
+    Some((key, value, 1))
 }
 
 fn link(source: &str, target: &str, timeout_secs: u64) -> ExecutionStatus {
@@ -620,6 +640,7 @@ fn manifest_json(
             "  \"route_monitor\": {},\n",
             "  \"route_obs\": {},\n",
             "  \"monitor_sinks\": [{}],\n",
+            "  \"velocity_curve\": \"{}\",\n",
             "  \"planned_ops\": [{}],\n",
             "  \"results\": [{}]\n",
             "}}\n"
@@ -645,6 +666,7 @@ fn manifest_json(
             .map(|sink| format!("\"{}\"", escape_json(sink)))
             .collect::<Vec<_>>()
             .join(","),
+        escape_json(&config.velocity_curve),
         ops_json,
         results_json
     )
@@ -727,6 +749,22 @@ mod tests {
         assert!(!command
             .iter()
             .any(|arg| arg == "-a" || arg == "-s" || arg == "-S"));
+    }
+
+    #[test]
+    fn mapper_plan_sets_velocity_curve_env() {
+        let mut config =
+            StartConfig::drs_default(PathBuf::from("/home/test"), PathBuf::from("/repo"));
+        config.velocity_curve = "mild-punch".to_string();
+        let ops = plan_drs(&config);
+        let command = ops
+            .iter()
+            .find_map(|op| match op {
+                PlannedOp::StartMapper { command, .. } => Some(command),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(command[0], "TD50_VELOCITY_CURVE=mild-punch");
     }
 
     #[test]

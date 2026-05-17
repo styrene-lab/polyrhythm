@@ -407,6 +407,7 @@ fn plan(
         config.streaming = true;
     }
     println!("streaming: {}", config.streaming);
+    println!("velocity curve: {}", config.velocity_curve);
     println!("load timeout: {}s", config.load_timeout_secs);
     println!("direct low-volume monitor: {}", route_monitor);
     println!("cache: {}", cache_dir().display());

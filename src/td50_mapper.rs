@@ -1,8 +1,38 @@
 use std::collections::BTreeSet;
+use std::env;
 
 pub const DRS_EMITTED_NOTES: &[u8] = &[
     35, 36, 37, 38, 41, 42, 43, 44, 45, 46, 48, 51, 57, 80, 81, 82, 90, 91, 92,
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VelocityCurve {
+    Linear,
+    MildPunch,
+    StrongPunch,
+}
+
+impl VelocityCurve {
+    pub fn from_env() -> Self {
+        match env::var("TD50_VELOCITY_CURVE")
+            .unwrap_or_else(|_| "linear".to_string())
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "mild" | "mild-punch" | "punch" => Self::MildPunch,
+            "strong" | "strong-punch" => Self::StrongPunch,
+            _ => Self::Linear,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Linear => "linear",
+            Self::MildPunch => "mild-punch",
+            Self::StrongPunch => "strong-punch",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MidiEvent {
@@ -29,16 +59,34 @@ impl HihatOpenness {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MapperState {
     cc4: u8,
     cc18: u8,
     suppress49: bool,
     suppress55: bool,
+    velocity_curve: VelocityCurve,
     pub trace: Vec<String>,
 }
 
+impl Default for MapperState {
+    fn default() -> Self {
+        Self::new(VelocityCurve::Linear)
+    }
+}
+
 impl MapperState {
+    pub fn new(velocity_curve: VelocityCurve) -> Self {
+        Self {
+            cc4: 0,
+            cc18: 0,
+            suppress49: false,
+            suppress55: false,
+            velocity_curve,
+            trace: Vec::new(),
+        }
+    }
+
     pub fn cc4(&self) -> u8 {
         self.cc4
     }
@@ -81,7 +129,7 @@ impl MapperState {
 
     fn map_note_on(&mut self, channel: u8, note: u8, velocity: u8) -> Vec<MidiEvent> {
         let mapped = map_note(note, self.cc4, self.cc18, velocity);
-        let out_velocity = map_velocity(velocity);
+        let out_velocity = self.velocity_curve.map(velocity);
 
         if note == 27 {
             self.suppress49 = true;
@@ -154,7 +202,19 @@ impl MapperState {
 }
 
 pub fn map_velocity(velocity: u8) -> u8 {
-    velocity.clamp(1, 127)
+    VelocityCurve::Linear.map(velocity)
+}
+
+impl VelocityCurve {
+    pub fn map(self, velocity: u8) -> u8 {
+        let velocity = velocity.clamp(1, 127);
+        let mapped = match self {
+            Self::Linear => velocity as u16,
+            Self::MildPunch => velocity as u16 * 115 / 100 + 6,
+            Self::StrongPunch => velocity as u16 * 125 / 100 + 8,
+        };
+        mapped.clamp(1, 127) as u8
+    }
 }
 
 pub fn map_note(note: u8, cc4: u8, cc18: u8, velocity: u8) -> u8 {
@@ -316,6 +376,15 @@ mod tests {
         assert_eq!(map_velocity(80), 80);
         assert_eq!(map_velocity(100), 100);
         assert_eq!(map_velocity(127), 127);
+    }
+
+    #[test]
+    fn mild_punch_velocity_curve_raises_midrange_without_exceeding_midi_max() {
+        assert_eq!(VelocityCurve::MildPunch.map(1), 7);
+        assert_eq!(VelocityCurve::MildPunch.map(40), 52);
+        assert_eq!(VelocityCurve::MildPunch.map(80), 98);
+        assert_eq!(VelocityCurve::MildPunch.map(110), 127);
+        assert_eq!(VelocityCurve::MildPunch.map(127), 127);
     }
 
     #[test]

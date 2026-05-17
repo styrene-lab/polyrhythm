@@ -8,11 +8,10 @@ ad-hoc shell orchestration with explicit safety policy and tested MIDI mapping.
 
 ## Current status
 
-- Pure Rust TD-50 mapping core exists.
-- Initial `polyrhythm` CLI exists for offline planning/policy/doctor checks.
-- ALSA sequencer I/O is not implemented yet.
-- The prototype mapper binary exits with status 2 so it cannot be mistaken for a
-  live mapper.
+- Pure Rust TD-50 mapping core exists, including reversible velocity curves for feel testing.
+- The Rust TD-50 mapper has ALSA sequencer I/O and preserves the legacy client/port contract.
+- `polyrhythm` is the validated runtime authority for DRS DrumGizmo start/check/monitor routing on this host.
+- Desktop audio recovery is explicit: `recover-audio` handles PipeWire/WirePlumber, COSMIC audio UI state, and common media clients together.
 
 ## CLI
 
@@ -30,12 +29,12 @@ polyrhythm trace path
 polyrhythm graph
 polyrhythm trace tail
 polyrhythm legacy-env
+polyrhythm audio-doctor
+polyrhythm recover-audio --dry-run
+polyrhythm recover-audio --execute
 ```
 
-These commands are intentionally offline/safe: they do not start DrumGizmo, do
-not probe the PipeWire graph, and do not restart audio services. `stop` is the
-first live-control command: it only targets known TD-50 client processes and
-pidfiles, never PipeWire/WirePlumber.
+Most commands are intentionally bounded: normal start/switch/monitor controls do not restart audio services, and graph inspection uses bounded snapshots instead of broad discovery. `recover-audio --execute` is the explicit exception for incident recovery; it recovers PipeWire/WirePlumber, onboard analog defaults, COSMIC audio UI state, and configured media clients as one dependency chain.
 
 ## Safety constraints
 
@@ -43,7 +42,8 @@ pidfiles, never PipeWire/WirePlumber.
 - Alternate kits are explicit diagnostics only.
 - OBS routing is off by default.
 - Do not probe broad PipeWire graphs as part of normal control flows.
-- Do not restart PipeWire/WirePlumber as part of kit switching.
+- Do not restart PipeWire/WirePlumber as part of kit switching. Use `recover-audio` for explicit incident recovery only.
+- Block live monitor routing when OBS receives the onboard speaker monitor feed.
 - Preserve the known TD-50 mapper client/port names when ALSA I/O is added:
   - client: `TD50-DrumGizmo-Hihat-Mapper`
   - port: `out`
@@ -77,4 +77,16 @@ polyrhythm graph-check --state engine-only # expected safe baseline
 polyrhythm quiet --volume 5%               # lower speakers without destroying graph evidence
 ```
 
-Current desired baseline is `engine-only`: DrumGizmo running, mapper MIDI linked, and all DrumGizmo audio outputs disconnected. OBS receiving the onboard speaker monitor feed is flagged suspicious because it may participate in feedback loops.
+Current desired baseline is `engine-only`: DrumGizmo running, mapper MIDI linked, and all DrumGizmo audio outputs disconnected. OBS receiving the onboard speaker monitor feed is flagged suspicious because it may participate in feedback loops; `monitor-test --execute` now refuses live speaker routing while that OBS feedback hazard is present.
+
+## COSMIC desktop audio recovery
+
+If desktop audio loses devices or media clients go silent after an audio-stack incident, do not keep restarting PipeWire by hand. Use the encoded recovery path:
+
+```bash
+polyrhythm recover-audio --dry-run   # inspect the actions
+polyrhythm recover-audio --execute   # mute/lower first, restart backend, refresh COSMIC/client state
+polyrhythm audio-doctor              # verify backend + COSMIC audio applet + onboard defaults
+```
+
+On this COSMIC host, healthy `pactl`/`wpctl` output alone is not enough. The COSMIC panel/audio applet and surviving media clients can stay stale after a backend restart.

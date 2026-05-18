@@ -79,6 +79,16 @@ polyrhythm quiet --volume 5%               # lower speakers without destroying g
 
 Current desired baseline is `engine-only`: DrumGizmo running, mapper MIDI linked, and all DrumGizmo audio outputs disconnected. OBS receiving the onboard speaker monitor feed is flagged suspicious because it may participate in feedback loops; `monitor-test --execute` now refuses live speaker routing while that OBS feedback hazard is present.
 
+For the current practice/audition/recording use case, use the balanced monitor preset rather than the full-kit probe:
+
+```bash
+polyrhythm monitor-test --pair practice-recording-balanced --volume 50% --execute
+```
+
+That preset intentionally keeps the player's speaker feed music-forward by routing only DrumGizmo overheads plus modest kick-front and snare-top support to the onboard monitor. Keep OBS pointed at the dedicated `TD50-OBS-Mix.monitor` source for recording/streaming audio; do not record the physical speaker monitor feed. The OBS/audience mix can carry more drum support than the player monitor without making the live room monitor fight Spotify.
+
+Kit audition policy is conservative: DRS remains the default stable kit, while CrocellKit, MuldjordKit, and Aasimonster are explicit experimental candidates until they have local kit XML, TD-50 midimap coverage, acceptable load/CPU behavior, and a verified channel routing plan. Audition alternate kits inside the same balanced routing topology first; do not change the engine and the routing model at the same time.
+
 ## COSMIC desktop audio recovery
 
 If desktop audio loses devices or media clients go silent after an audio-stack incident, do not keep restarting PipeWire by hand. Use the encoded recovery path:

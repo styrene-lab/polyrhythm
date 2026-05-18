@@ -10,10 +10,11 @@ use crate::graph::{
     check as graph_check, dump as graph_dump, print_summary as print_graph_summary, DesiredState,
 };
 use crate::monitor::{
-    default_sink as default_monitor_sink, describe_setup_op as describe_monitor_setup_op,
-    execute as execute_monitor, execute_setup as execute_monitor_setup, plan as plan_monitor,
+    default_recording_sink, default_sink as default_monitor_sink,
+    describe_setup_op as describe_monitor_setup_op, execute as execute_monitor,
+    execute_setup as execute_monitor_setup, plan as plan_monitor, recording_plan,
     setup_failed as monitor_setup_failed, setup_plan as plan_monitor_setup, MonitorAction,
-    MonitorPair,
+    MonitorPair, RecordingMix,
 };
 use crate::preflight::{
     has_failures, run as run_preflight, CheckStatus, PreflightConfig, PreflightReport,
@@ -184,6 +185,20 @@ enum Command {
         execute: bool,
     },
 
+    /// Apply the recording-balanced OBS/player routing preset. Dry-run by default.
+    RecordingBalanced {
+        #[arg(long, default_value = "50%")]
+        volume: String,
+        #[arg(long, default_value = DEFAULT_MONITOR_SINK)]
+        monitor_sink: String,
+        #[arg(long)]
+        recording_sink: Option<String>,
+        #[arg(long, default_value_t = true, conflicts_with = "execute")]
+        dry_run: bool,
+        #[arg(long)]
+        execute: bool,
+    },
+
     /// Remove low-volume DrumGizmo monitor test routes without killing the engine.
     MonitorClear {
         #[arg(long, value_enum, default_value_t = MonitorPairArg::FullKit)]
@@ -258,6 +273,7 @@ enum GraphState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum MonitorPairArg {
     Overheads,
+    PracticeRecordingBalanced,
     FullKit,
 }
 
@@ -265,6 +281,7 @@ impl From<MonitorPairArg> for MonitorPair {
     fn from(value: MonitorPairArg) -> Self {
         match value {
             MonitorPairArg::Overheads => Self::Overheads,
+            MonitorPairArg::PracticeRecordingBalanced => Self::PracticeRecordingBalanced,
             MonitorPairArg::FullKit => Self::FullKit,
         }
     }
@@ -398,6 +415,21 @@ fn run_result(cli: Cli) -> Result<(), String> {
             dry_run,
             execute,
         } => monitor_test(pair, &sink, &volume, dry_run, execute),
+        Command::RecordingBalanced {
+            volume,
+            monitor_sink,
+            recording_sink,
+            dry_run,
+            execute,
+        } => recording_balanced(
+            &monitor_sink,
+            recording_sink
+                .as_deref()
+                .unwrap_or(default_recording_sink()),
+            &volume,
+            dry_run,
+            execute,
+        ),
         Command::MonitorClear {
             pair,
             sink,
@@ -865,6 +897,79 @@ fn monitor_test(
         ));
     } else {
         println!("live monitor links: skipped");
+    }
+    Ok(())
+}
+
+fn recording_balanced(
+    monitor_sink: &str,
+    recording_sink: &str,
+    volume: &str,
+    dry_run: bool,
+    execute: bool,
+) -> Result<(), String> {
+    let live = execute;
+    if !dry_run && !live {
+        return Err("use --dry-run or --execute".to_string());
+    }
+    let monitor_sink = if monitor_sink.is_empty() {
+        default_monitor_sink()
+    } else {
+        monitor_sink
+    };
+    let recording_sink = if recording_sink.is_empty() {
+        default_recording_sink()
+    } else {
+        recording_sink
+    };
+    let setup_ops = plan_monitor_setup(monitor_sink, volume);
+    let monitor_ops = plan_monitor(MonitorPair::PracticeRecordingBalanced, monitor_sink);
+    let recording_ops = recording_plan(RecordingMix::Balanced, recording_sink);
+    println!(
+        "polyrhythm recording-balanced {}",
+        if live { "execute" } else { "dry-run" }
+    );
+    println!("monitor sink: {monitor_sink}");
+    println!("recording sink: {recording_sink}");
+    println!("monitor volume: {volume}");
+    for op in &setup_ops {
+        println!("- {}", describe_monitor_setup_op(op));
+    }
+    for op in &monitor_ops {
+        println!("- player link {} -> {}", op.source, op.target);
+    }
+    for op in &recording_ops {
+        println!("- recording link {} -> {}", op.source, op.target);
+    }
+    if live {
+        guard_no_obs_speaker_monitor()?;
+        let setup_results = execute_monitor_setup(&setup_ops);
+        for result in &setup_results {
+            println!("{result}");
+        }
+        if monitor_setup_failed(&setup_results) {
+            let _ = write_event(TraceEvent::error(
+                "recording_balanced_setup_failed",
+                format!(
+                    "monitor_sink={monitor_sink} recording_sink={recording_sink} volume={volume}"
+                ),
+            ));
+            return Err("recording-balanced setup failed".to_string());
+        }
+        for result in execute_monitor(MonitorAction::Link, &monitor_ops) {
+            println!("{result}");
+        }
+        for result in execute_monitor(MonitorAction::Link, &recording_ops) {
+            println!("{result}");
+        }
+        let snapshot = graph_dump().map_err(|err| format!("graph dump failed: {err}"))?;
+        print_graph_summary(&snapshot);
+        let _ = write_event(TraceEvent::warn(
+            "recording_balanced_execute",
+            format!("monitor_sink={monitor_sink} recording_sink={recording_sink}"),
+        ));
+    } else {
+        println!("live recording-balanced links: skipped");
     }
     Ok(())
 }

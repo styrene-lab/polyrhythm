@@ -7,10 +7,17 @@ const OVERHEAD_LEFT: &str = "DrumGizmo:5-OHL";
 const OVERHEAD_RIGHT: &str = "DrumGizmo:6-OHR";
 const PLAYBACK_LEFT: &str = "playback_FL";
 const PLAYBACK_RIGHT: &str = "playback_FR";
+const TD50_OBS_MIX: &str = "TD50-OBS-Mix";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordingMix {
+    Balanced,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MonitorPair {
     Overheads,
+    PracticeRecordingBalanced,
     FullKit,
 }
 
@@ -82,8 +89,16 @@ pub fn plan(pair: MonitorPair, sink: &str) -> Vec<MonitorOp> {
                 target: format!("{sink}:{PLAYBACK_RIGHT}"),
             },
         ],
+        MonitorPair::PracticeRecordingBalanced => practice_recording_balanced_plan(sink),
         MonitorPair::FullKit => full_kit_plan(sink),
     }
+}
+
+fn practice_recording_balanced_plan(sink: &str) -> Vec<MonitorOp> {
+    let mut ops = plan(MonitorPair::Overheads, sink);
+    ops.extend(stereo("DrumGizmo:3-Kdrum_front", sink));
+    ops.extend(stereo("DrumGizmo:9-Snare_top", sink));
+    ops
 }
 
 fn stereo(source: &str, sink: &str) -> Vec<MonitorOp> {
@@ -97,6 +112,57 @@ fn stereo(source: &str, sink: &str) -> Vec<MonitorOp> {
             target: format!("{sink}:{PLAYBACK_RIGHT}"),
         },
     ]
+}
+
+pub fn recording_plan(mix: RecordingMix, sink: &str) -> Vec<MonitorOp> {
+    match mix {
+        RecordingMix::Balanced => recording_balanced_plan(sink),
+    }
+}
+
+fn recording_balanced_plan(sink: &str) -> Vec<MonitorOp> {
+    let mut ops = Vec::new();
+    ops.push(MonitorOp {
+        source: "spotify:output_FL".to_string(),
+        target: format!("{sink}:{PLAYBACK_LEFT}"),
+    });
+    ops.push(MonitorOp {
+        source: "spotify:output_FR".to_string(),
+        target: format!("{sink}:{PLAYBACK_RIGHT}"),
+    });
+    ops.push(MonitorOp {
+        source: "DrumGizmo:0-AmbL".to_string(),
+        target: format!("{sink}:{PLAYBACK_LEFT}"),
+    });
+    ops.push(MonitorOp {
+        source: "DrumGizmo:1-AmbR".to_string(),
+        target: format!("{sink}:{PLAYBACK_RIGHT}"),
+    });
+    for source in [
+        "DrumGizmo:5-OHL",
+        "DrumGizmo:3-Kdrum_front",
+        "DrumGizmo:9-Snare_top",
+    ] {
+        ops.push(MonitorOp {
+            source: source.to_string(),
+            target: format!("{sink}:{PLAYBACK_LEFT}"),
+        });
+    }
+    for source in [
+        "DrumGizmo:6-OHR",
+        "DrumGizmo:3-Kdrum_front",
+        "DrumGizmo:9-Snare_top",
+    ] {
+        ops.push(MonitorOp {
+            source: source.to_string(),
+            target: format!("{sink}:{PLAYBACK_RIGHT}"),
+        });
+    }
+    ops
+}
+
+pub fn default_recording_sink() -> &'static str {
+    TD50_OBS_MIX
 }
 
 fn full_kit_plan(sink: &str) -> Vec<MonitorOp> {
@@ -274,6 +340,30 @@ mod tests {
         assert_eq!(ops[0].target, format!("{DEFAULT_SINK}:playback_FL"));
         assert_eq!(ops[1].source, "DrumGizmo:6-OHR");
         assert_eq!(ops[1].target, format!("{DEFAULT_SINK}:playback_FR"));
+    }
+
+    #[test]
+    fn practice_recording_balanced_plan_routes_overheads_with_kick_and_snare_support() {
+        let ops = plan(MonitorPair::PracticeRecordingBalanced, DEFAULT_SINK);
+        assert_eq!(ops.len(), 6);
+        assert_eq!(ops[0].source, "DrumGizmo:5-OHL");
+        assert_eq!(ops[1].source, "DrumGizmo:6-OHR");
+        assert!(ops.iter().any(|op| op.source == "DrumGizmo:3-Kdrum_front"));
+        assert!(ops.iter().any(|op| op.source == "DrumGizmo:9-Snare_top"));
+        assert!(ops.iter().all(|op| op.target.starts_with(DEFAULT_SINK)));
+    }
+
+    #[test]
+    fn recording_balanced_plan_routes_spotify_and_drum_support_to_obs_mix() {
+        let ops = recording_plan(RecordingMix::Balanced, TD50_OBS_MIX);
+        assert_eq!(ops.len(), 10);
+        assert!(ops.iter().any(|op| op.source == "spotify:output_FL"));
+        assert!(ops.iter().any(|op| op.source == "spotify:output_FR"));
+        assert!(ops.iter().any(|op| op.source == "DrumGizmo:0-AmbL"));
+        assert!(ops.iter().any(|op| op.source == "DrumGizmo:1-AmbR"));
+        assert!(ops.iter().any(|op| op.source == "DrumGizmo:3-Kdrum_front"));
+        assert!(ops.iter().any(|op| op.source == "DrumGizmo:9-Snare_top"));
+        assert!(ops.iter().all(|op| op.target.starts_with(TD50_OBS_MIX)));
     }
 
     #[test]

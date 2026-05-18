@@ -39,6 +39,7 @@ pub enum Intent {
     SnareRim,
     SnareRimshot,
     TomHead(u8),
+    TomRim(u8),
     HihatClosed,
     HihatSemiOpen,
     HihatOpen,
@@ -406,6 +407,15 @@ fn parse_intent(raw: &str) -> Result<Intent, String> {
                     .map_err(|_| format!("invalid tom intent: {raw}"));
             }
             if let Some(index) = raw
+                .strip_prefix("tom.")
+                .and_then(|rest| rest.strip_suffix(".rim"))
+            {
+                return index
+                    .parse()
+                    .map(Intent::TomRim)
+                    .map_err(|_| format!("invalid tom intent: {raw}"));
+            }
+            if let Some(index) = raw
                 .strip_prefix("crash.")
                 .and_then(|rest| rest.strip_suffix(".bow"))
             {
@@ -445,6 +455,7 @@ impl std::fmt::Display for Intent {
             Intent::SnareRim => f.write_str("snare.rim"),
             Intent::SnareRimshot => f.write_str("snare.rimshot"),
             Intent::TomHead(index) => write!(f, "tom.{index}.head"),
+            Intent::TomRim(index) => write!(f, "tom.{index}.rim"),
             Intent::HihatClosed => f.write_str("hihat.closed"),
             Intent::HihatSemiOpen => f.write_str("hihat.semi_open"),
             Intent::HihatOpen => f.write_str("hihat.open"),
@@ -470,7 +481,11 @@ mod tests {
         assert!(profile
             .inputs
             .iter()
-            .any(|input| input.intent == Intent::TomHead(2) && input.notes == [45, 47]));
+            .any(|input| input.intent == Intent::TomHead(2) && input.notes == [45]));
+        assert!(profile
+            .inputs
+            .iter()
+            .any(|input| input.intent == Intent::TomRim(2) && input.notes == [47]));
         assert!(profile
             .inputs
             .iter()

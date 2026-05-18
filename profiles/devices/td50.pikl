@@ -6,8 +6,11 @@ device td50 {
   input snare_rim { intent snare.rim notes [37] }
   input snare_rimshot { intent snare.rimshot notes [40] }
   input tom1 { intent tom.1.head notes [48] }
-  input tom2 { intent tom.2.head notes [45, 47] }
+  input tom1_rim { intent tom.1.rim notes [50] }
+  input tom2 { intent tom.2.head notes [45] }
+  input tom2_rim { intent tom.2.rim notes [47] }
   input tom3 { intent tom.3.head notes [43] }
+  input tom3_rim { intent tom.3.rim notes [58] }
   input tom4 { intent tom.4.head notes [41] }
   input hihat_closed { intent hihat.closed notes [42] }
   input hihat_semi_open { intent hihat.semi_open notes [80] }

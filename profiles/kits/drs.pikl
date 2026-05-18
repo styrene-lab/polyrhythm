@@ -8,8 +8,11 @@ kit drs {
   map snare.rim note 40 instr Snare_rim
   map snare.rimshot note 40 instr Snare_rim
   map tom.1.head note 48 instr Tom1
+  map tom.1.rim note 48 instr Tom1
   map tom.2.head note 45 instr Tom2
+  map tom.2.rim note 45 instr Tom2
   map tom.3.head note 43 instr Tom3
+  map tom.3.rim note 43 instr Tom3
   map hihat.closed note 42 instr Hihat_closed
   map hihat.semi_open note 80 instr Hihat_semi_open
   map hihat.open note 46 instr Hihat_open

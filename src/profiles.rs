@@ -45,7 +45,10 @@ pub enum Intent {
     HihatPedal,
     RideBow,
     RideBell,
+    RideEdge,
     CrashBow(u8),
+    CrashEdge(u8),
+    CrashChoke(u8),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -391,6 +394,7 @@ fn parse_intent(raw: &str) -> Result<Intent, String> {
         "hihat.pedal" => Ok(Intent::HihatPedal),
         "ride.bow" => Ok(Intent::RideBow),
         "ride.bell" => Ok(Intent::RideBell),
+        "ride.edge" => Ok(Intent::RideEdge),
         _ => {
             if let Some(index) = raw
                 .strip_prefix("tom.")
@@ -408,6 +412,24 @@ fn parse_intent(raw: &str) -> Result<Intent, String> {
                 return index
                     .parse()
                     .map(Intent::CrashBow)
+                    .map_err(|_| format!("invalid crash intent: {raw}"));
+            }
+            if let Some(index) = raw
+                .strip_prefix("crash.")
+                .and_then(|rest| rest.strip_suffix(".edge"))
+            {
+                return index
+                    .parse()
+                    .map(Intent::CrashEdge)
+                    .map_err(|_| format!("invalid crash intent: {raw}"));
+            }
+            if let Some(index) = raw
+                .strip_prefix("crash.")
+                .and_then(|rest| rest.strip_suffix(".choke"))
+            {
+                return index
+                    .parse()
+                    .map(Intent::CrashChoke)
                     .map_err(|_| format!("invalid crash intent: {raw}"));
             }
             Err(format!("unknown intent: {raw}"))
@@ -429,7 +451,10 @@ impl std::fmt::Display for Intent {
             Intent::HihatPedal => f.write_str("hihat.pedal"),
             Intent::RideBow => f.write_str("ride.bow"),
             Intent::RideBell => f.write_str("ride.bell"),
+            Intent::RideEdge => f.write_str("ride.edge"),
             Intent::CrashBow(index) => write!(f, "crash.{index}.bow"),
+            Intent::CrashEdge(index) => write!(f, "crash.{index}.edge"),
+            Intent::CrashChoke(index) => write!(f, "crash.{index}.choke"),
         }
     }
 }
@@ -446,6 +471,10 @@ mod tests {
             .inputs
             .iter()
             .any(|input| input.intent == Intent::TomHead(2) && input.notes == [45, 47]));
+        assert!(profile
+            .inputs
+            .iter()
+            .any(|input| input.intent == Intent::CrashEdge(1) && input.notes == [55, 81]));
     }
 
     #[test]

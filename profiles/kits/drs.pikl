@@ -16,6 +16,10 @@ kit drs {
   map hihat.pedal note 44 instr Hihat_foot
   map ride.bow note 51 instr Ride_tip
   map ride.bell note 53 instr Ride_tip_bell
+  map ride.edge note 51 instr Ride_shank
   map crash.1.bow note 49 instr Crash_left_tip
+  map crash.1.edge note 49 instr Crash_left_shank
+  map crash.1.choke note 56 instr Crash_left_tip
   map crash.2.bow note 57 instr Crash_right_tip
+  map crash.2.choke note 75 instr Crash_right_tip
 }

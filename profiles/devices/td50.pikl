@@ -15,6 +15,10 @@ device td50 {
   input hihat_pedal { intent hihat.pedal notes [44] }
   input ride_bow { intent ride.bow notes [51] }
   input ride_bell { intent ride.bell notes [53] }
-  input crash1 { intent crash.1.bow notes [49, 55, 81] }
+  input ride_edge { intent ride.edge notes [59] }
+  input crash1 { intent crash.1.bow notes [49] }
+  input crash1_edge { intent crash.1.edge notes [55, 81] }
+  input crash1_choke { intent crash.1.choke notes [56] }
   input crash2 { intent crash.2.bow notes [57] }
+  input crash2_choke { intent crash.2.choke notes [75] }
 }

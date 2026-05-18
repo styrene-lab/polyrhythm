@@ -17,6 +17,10 @@ kit crocell {
   map hihat.pedal note 44 instr HihatPedal
   map ride.bow note 51 instr RideR
   map ride.bell note 53 instr RideRBell
+  map ride.edge note 51 instr RideR
   map crash.1.bow note 49 instr CrashL
+  map crash.1.edge note 49 instr CrashL
+  map crash.1.choke note 56 instr CrashLStopped
   map crash.2.bow note 57 instr CrashR
+  map crash.2.choke note 75 instr CrashRStopped
 }

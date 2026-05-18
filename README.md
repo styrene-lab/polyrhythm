@@ -32,9 +32,47 @@ polyrhythm legacy-env
 polyrhythm audio-doctor
 polyrhythm recover-audio --dry-run
 polyrhythm recover-audio --execute
+polyrhythm devices
+polyrhythm kits
+polyrhythm profile-inspect --device td50 --kit crocell
+polyrhythm map-check --device td50 --kit crocell
+polyrhythm generate-midimap --device td50 --kit crocell
 ```
 
 Most commands are intentionally bounded: normal start/switch/monitor controls do not restart audio services, and graph inspection uses bounded snapshots instead of broad discovery. `recover-audio --execute` is the explicit exception for incident recovery; it recovers PipeWire/WirePlumber, onboard analog defaults, COSMIC audio UI state, and configured media clients as one dependency chain.
+
+## Canonical profiles
+
+Pikl is the canonical profile format for device and kit mapping. DrumGizmo XML midimaps are generated compatibility artifacts only; do not treat generated XML as source-of-truth.
+
+Profile sources live under:
+
+```text
+profiles/devices/*.pikl
+profiles/kits/*.pikl
+```
+
+The current built-in profile pair is:
+
+```bash
+polyrhythm profile-inspect --device td50 --kit crocell
+polyrhythm map-check --device td50 --kit crocell
+polyrhythm generate-midimap --device td50 --kit crocell
+```
+
+Generated DrumGizmo midimaps are written under the cache directory:
+
+```text
+~/.cache/td50/generated-midimaps/<device>-<kit>.xml
+```
+
+The compatibility direction is always:
+
+```text
+Pikl device profile + Pikl kit profile -> generated DrumGizmo XML
+```
+
+not the reverse.
 
 ## Safety constraints
 

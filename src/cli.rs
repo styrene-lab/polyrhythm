@@ -266,6 +266,14 @@ enum Command {
         kit: String,
     },
 
+    /// Print canonical Pikl profile details for a device/kit pair.
+    ProfileInspect {
+        #[arg(long, default_value = "td50")]
+        device: String,
+        #[arg(long, default_value = "crocell")]
+        kit: String,
+    },
+
     /// Print the current safety policy encoded by the CLI.
     Policy,
 }
@@ -487,6 +495,7 @@ fn run_result(cli: Cli) -> Result<(), String> {
         Command::Kits => kits(),
         Command::GenerateMidimap { device, kit } => generate_midimap_command(&device, &kit),
         Command::MapCheck { device, kit } => map_check(&device, &kit),
+        Command::ProfileInspect { device, kit } => profile_inspect(&device, &kit),
         Command::Policy => policy(),
     }
 }
@@ -1288,6 +1297,40 @@ fn map_check(device_id: &str, kit_id: &str) -> Result<(), String> {
             generated.warnings.len()
         ))
     }
+}
+
+fn profile_inspect(device_id: &str, kit_id: &str) -> Result<(), String> {
+    let device = find_device(&repo_dir(), device_id)
+        .ok_or_else(|| format!("unknown device profile '{device_id}'"))?;
+    let kit = find_kit(&repo_dir(), &home_dir(), kit_id)
+        .ok_or_else(|| format!("unknown kit profile '{kit_id}'"))?;
+    println!("polyrhythm profile-inspect");
+    println!("canonical format: Pikl");
+    println!("generated compatibility target: DrumGizmo midimap XML");
+    println!("device: {} ({})", device.id, device.name);
+    println!("kit: {} ({})", kit.id, kit.name);
+    println!("kit xml: {}", kit.kit_xml.display());
+    println!("sample params: {}", kit.sample_params);
+    println!("device inputs:");
+    for input in &device.inputs {
+        let notes = input
+            .notes
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        match kit.mappings.get(&input.intent) {
+            Some(target) => println!(
+                "  {}: {} notes=[{}] -> note {} instr {}",
+                input.id, input.intent, notes, target.note, target.instrument
+            ),
+            None => println!(
+                "  {}: {} notes=[{}] -> unmapped",
+                input.id, input.intent, notes
+            ),
+        }
+    }
+    Ok(())
 }
 
 fn policy() -> Result<(), String> {

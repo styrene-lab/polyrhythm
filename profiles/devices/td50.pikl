@@ -1,0 +1,20 @@
+device td50 {
+  name "Roland TD-50"
+
+  input kick { intent kick.main notes [36, 35] }
+  input snare_head { intent snare.head notes [38] }
+  input snare_rim { intent snare.rim notes [37] }
+  input snare_rimshot { intent snare.rimshot notes [40] }
+  input tom1 { intent tom.1.head notes [48] }
+  input tom2 { intent tom.2.head notes [45, 47] }
+  input tom3 { intent tom.3.head notes [43] }
+  input tom4 { intent tom.4.head notes [41] }
+  input hihat_closed { intent hihat.closed notes [42] }
+  input hihat_semi_open { intent hihat.semi_open notes [80] }
+  input hihat_open { intent hihat.open notes [46] }
+  input hihat_pedal { intent hihat.pedal notes [44] }
+  input ride_bow { intent ride.bow notes [51] }
+  input ride_bell { intent ride.bell notes [53] }
+  input crash1 { intent crash.1.bow notes [49, 55, 81] }
+  input crash2 { intent crash.2.bow notes [57] }
+}

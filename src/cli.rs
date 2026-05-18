@@ -20,6 +20,9 @@ use crate::preflight::{
     has_failures, run as run_preflight, CheckStatus, PreflightConfig, PreflightReport,
 };
 use crate::process::{pid_statuses, stop, ProcessState, StopOptions};
+use crate::profiles::{
+    builtin_devices, builtin_kits, find_device, find_kit, write_generated_midimap,
+};
 use crate::recovery::{
     doctor as audio_doctor_report, recover as recover_audio_steps, RecoverAudioOptions,
     DEFAULT_CARD as DEFAULT_AUDIO_CARD, DEFAULT_PORT as DEFAULT_AUDIO_PORT,
@@ -241,6 +244,28 @@ enum Command {
         restart_cosmic_panel: bool,
     },
 
+    /// List built-in device profiles.
+    Devices,
+
+    /// List built-in DrumGizmo kit profiles.
+    Kits,
+
+    /// Generate a DrumGizmo midimap from a device profile and kit profile.
+    GenerateMidimap {
+        #[arg(long, default_value = "td50")]
+        device: String,
+        #[arg(long, default_value = "crocell")]
+        kit: String,
+    },
+
+    /// Validate semantic coverage between a device profile and kit profile.
+    MapCheck {
+        #[arg(long, default_value = "td50")]
+        device: String,
+        #[arg(long, default_value = "crocell")]
+        kit: String,
+    },
+
     /// Print the current safety policy encoded by the CLI.
     Policy,
 }
@@ -458,6 +483,10 @@ fn run_result(cli: Cli) -> Result<(), String> {
             restart_spotify,
             restart_cosmic_panel,
         ),
+        Command::Devices => devices(),
+        Command::Kits => kits(),
+        Command::GenerateMidimap { device, kit } => generate_midimap_command(&device, &kit),
+        Command::MapCheck { device, kit } => map_check(&device, &kit),
         Command::Policy => policy(),
     }
 }
@@ -1185,6 +1214,82 @@ fn command_exists(command: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn devices() -> Result<(), String> {
+    println!("polyrhythm device profiles");
+    for device in builtin_devices(&repo_dir()) {
+        println!(
+            "{}\t{}\tinputs={}",
+            device.id,
+            device.name,
+            device.inputs.len()
+        );
+    }
+    Ok(())
+}
+
+fn kits() -> Result<(), String> {
+    println!("polyrhythm kit profiles");
+    for kit in builtin_kits(&repo_dir(), &home_dir()) {
+        println!(
+            "{}\t{}\tkit={}\tmappings={}",
+            kit.id,
+            kit.name,
+            kit.kit_xml.display(),
+            kit.mappings.len()
+        );
+    }
+    Ok(())
+}
+
+fn generate_midimap_command(device_id: &str, kit_id: &str) -> Result<(), String> {
+    let device = find_device(&repo_dir(), device_id)
+        .ok_or_else(|| format!("unknown device profile '{device_id}'"))?;
+    let kit = find_kit(&repo_dir(), &home_dir(), kit_id)
+        .ok_or_else(|| format!("unknown kit profile '{kit_id}'"))?;
+    let (path, generated) = write_generated_midimap(&cache_dir(), &device, &kit)
+        .map_err(|err| format!("failed to write generated midimap: {err}"))?;
+    println!("generated: {}", path.display());
+    println!("device: {} ({})", device.id, device.name);
+    println!("kit: {} ({})", kit.id, kit.name);
+    println!("mapped notes: {}", generated.mapped.len());
+    for warning in &generated.warnings {
+        println!("warn: {warning}");
+    }
+    if generated.warnings.is_empty() {
+        println!("warnings: 0");
+    }
+    Ok(())
+}
+
+fn map_check(device_id: &str, kit_id: &str) -> Result<(), String> {
+    let device = find_device(&repo_dir(), device_id)
+        .ok_or_else(|| format!("unknown device profile '{device_id}'"))?;
+    let kit = find_kit(&repo_dir(), &home_dir(), kit_id)
+        .ok_or_else(|| format!("unknown kit profile '{kit_id}'"))?;
+    let generated = crate::profiles::generate_midimap(&device, &kit);
+    println!("polyrhythm map-check");
+    println!("device: {} ({})", device.id, device.name);
+    println!("kit: {} ({})", kit.id, kit.name);
+    for mapping in &generated.mapped {
+        println!(
+            "ok: {} note {} -> {}",
+            mapping.intent, mapping.device_note, mapping.instrument
+        );
+    }
+    for warning in &generated.warnings {
+        println!("warn: {warning}");
+    }
+    if generated.warnings.is_empty() {
+        println!("coverage: ok");
+        Ok(())
+    } else {
+        Err(format!(
+            "map-check found {} warning(s)",
+            generated.warnings.len()
+        ))
+    }
+}
+
 fn policy() -> Result<(), String> {
     println!("polyrhythm safety policy");
     println!("- DRS is the only default kit path.");
@@ -1222,14 +1327,18 @@ fn home_dir() -> PathBuf {
 }
 
 fn repo_dir() -> PathBuf {
-    env::var_os("POLYRHYTHM_REPO_DIR")
-        .map(PathBuf::from)
-        .or_else(|| {
-            env::current_exe()
-                .ok()
-                .and_then(|path| path.parent().map(PathBuf::from))
-                .and_then(|bin| bin.parent().map(PathBuf::from))
-        })
+    if let Some(repo) = env::var_os("POLYRHYTHM_REPO_DIR").map(PathBuf::from) {
+        return repo;
+    }
+    if let Ok(current) = env::current_dir() {
+        if current.join("Cargo.toml").exists() && current.join("profiles").exists() {
+            return current;
+        }
+    }
+    env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(PathBuf::from))
+        .and_then(|bin| bin.parent().map(PathBuf::from))
         .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
 

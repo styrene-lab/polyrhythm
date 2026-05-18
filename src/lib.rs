@@ -4,6 +4,7 @@ pub mod graph;
 pub mod monitor;
 pub mod preflight;
 pub mod process;
+pub mod profiles;
 pub mod recovery;
 pub mod start;
 pub mod td50_mapper;

@@ -1,0 +1,21 @@
+kit drs {
+  name "DRSKit"
+  kit_xml "~/.local/share/drumgizmo/kits/DRSKit/DRSKit_full.xml"
+  sample_params "close=0.10,diverse=0.12,random=0.02"
+
+  map kick.main note 36 instr Kdrum_without_contact
+  map snare.head note 38 instr Snare
+  map snare.rim note 40 instr Snare_rim
+  map snare.rimshot note 40 instr Snare_rim
+  map tom.1.head note 48 instr Tom1
+  map tom.2.head note 45 instr Tom2
+  map tom.3.head note 43 instr Tom3
+  map hihat.closed note 42 instr Hihat_closed
+  map hihat.semi_open note 80 instr Hihat_semi_open
+  map hihat.open note 46 instr Hihat_open
+  map hihat.pedal note 44 instr Hihat_foot
+  map ride.bow note 51 instr Ride_tip
+  map ride.bell note 53 instr Ride_tip_bell
+  map crash.1.bow note 49 instr Crash_left_tip
+  map crash.2.bow note 57 instr Crash_right_tip
+}

@@ -30,6 +30,7 @@ pub struct KitProfile {
 pub struct KitTarget {
     pub note: u8,
     pub instrument: String,
+    pub fallback: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -309,9 +310,17 @@ fn parse_input_line(line: &str) -> Result<DeviceInput, String> {
 
 fn parse_map_line(line: &str) -> Result<(Intent, KitTarget), String> {
     let tokens = tokenize(line);
-    if tokens.len() != 6 || tokens[0] != "map" || tokens[2] != "note" || tokens[4] != "instr" {
+    if tokens.len() != 6 && tokens.len() != 7 {
         return Err(format!("invalid map line: {line}"));
     }
+    if tokens[0] != "map" || tokens[2] != "note" || tokens[4] != "instr" {
+        return Err(format!("invalid map line: {line}"));
+    }
+    let fallback = match tokens.get(6).map(String::as_str) {
+        Some("fallback") => true,
+        Some(other) => return Err(format!("invalid map qualifier '{other}' in: {line}")),
+        None => false,
+    };
     let intent = parse_intent(&tokens[1])?;
     let note = tokens[3]
         .parse()
@@ -321,6 +330,7 @@ fn parse_map_line(line: &str) -> Result<(Intent, KitTarget), String> {
         KitTarget {
             note,
             instrument: tokens[5].clone(),
+            fallback,
         },
     ))
 }
@@ -512,6 +522,7 @@ mod tests {
                 .instrument,
             "Tom2"
         );
+        assert!(profile.mappings.get(&Intent::TomRim(2)).unwrap().fallback);
     }
 
     #[test]

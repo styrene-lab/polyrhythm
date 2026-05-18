@@ -1280,9 +1280,14 @@ fn map_check(device_id: &str, kit_id: &str) -> Result<(), String> {
     println!("device: {} ({})", device.id, device.name);
     println!("kit: {} ({})", kit.id, kit.name);
     for mapping in &generated.mapped {
+        let qualifier = kit
+            .mappings
+            .get(&mapping.intent)
+            .map(|target| if target.fallback { "fallback" } else { "exact" })
+            .unwrap_or("unknown");
         println!(
-            "ok: {} note {} -> {}",
-            mapping.intent, mapping.device_note, mapping.instrument
+            "ok: {} note {} -> {} ({})",
+            mapping.intent, mapping.device_note, mapping.instrument, qualifier
         );
     }
     for warning in &generated.warnings {
@@ -1320,10 +1325,13 @@ fn profile_inspect(device_id: &str, kit_id: &str) -> Result<(), String> {
             .collect::<Vec<_>>()
             .join(",");
         match kit.mappings.get(&input.intent) {
-            Some(target) => println!(
-                "  {}: {} notes=[{}] -> note {} instr {}",
-                input.id, input.intent, notes, target.note, target.instrument
-            ),
+            Some(target) => {
+                let qualifier = if target.fallback { "fallback" } else { "exact" };
+                println!(
+                    "  {}: {} notes=[{}] -> note {} instr {} ({})",
+                    input.id, input.intent, notes, target.note, target.instrument, qualifier
+                );
+            }
             None => println!(
                 "  {}: {} notes=[{}] -> unmapped",
                 input.id, input.intent, notes

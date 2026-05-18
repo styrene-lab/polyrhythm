@@ -8,21 +8,21 @@ kit drs {
   map snare.rim note 40 instr Snare_rim
   map snare.rimshot note 40 instr Snare_rim
   map tom.1.head note 48 instr Tom1
-  map tom.1.rim note 48 instr Tom1
+  map tom.1.rim note 48 instr Tom1 fallback
   map tom.2.head note 45 instr Tom2
-  map tom.2.rim note 45 instr Tom2
+  map tom.2.rim note 45 instr Tom2 fallback
   map tom.3.head note 43 instr Tom3
-  map tom.3.rim note 43 instr Tom3
+  map tom.3.rim note 43 instr Tom3 fallback
   map hihat.closed note 42 instr Hihat_closed
   map hihat.semi_open note 80 instr Hihat_semi_open
   map hihat.open note 46 instr Hihat_open
   map hihat.pedal note 44 instr Hihat_foot
   map ride.bow note 51 instr Ride_tip
   map ride.bell note 53 instr Ride_tip_bell
-  map ride.edge note 51 instr Ride_shank
+  map ride.edge note 51 instr Ride_shank fallback
   map crash.1.bow note 49 instr Crash_left_tip
-  map crash.1.edge note 49 instr Crash_left_shank
-  map crash.1.choke note 56 instr Crash_left_tip
+  map crash.1.edge note 49 instr Crash_left_shank fallback
+  map crash.1.choke note 56 instr Crash_left_tip fallback
   map crash.2.bow note 57 instr Crash_right_tip
-  map crash.2.choke note 75 instr Crash_right_tip
+  map crash.2.choke note 75 instr Crash_right_tip fallback
 }

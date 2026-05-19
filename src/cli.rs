@@ -34,6 +34,7 @@ use crate::start::{
 use crate::td50_mapper::{mapped_notes_from_midimap, DRS_EMITTED_NOTES};
 use crate::trace::{tail as trace_tail, trace_path, write_event, TraceEvent};
 use crate::workbench::coverage as workbench_coverage;
+use crate::workbench::replay as workbench_replay;
 use crate::workbench::trace as workbench_trace;
 
 const DEFAULT_CACHE: &str = ".cache/td50";
@@ -296,6 +297,15 @@ enum WorkbenchCommand {
         kit: String,
         #[arg(long)]
         jsonl: Option<PathBuf>,
+    },
+
+    /// Replay a workbench JSONL raw-event trace through the current mapper core.
+    Replay {
+        trace: PathBuf,
+        #[arg(long, default_value = "td50")]
+        device: String,
+        #[arg(long, default_value = "crocell")]
+        kit: String,
     },
 }
 
@@ -1368,6 +1378,41 @@ fn workbench(command: WorkbenchCommand) -> Result<(), String> {
         WorkbenchCommand::Coverage { device, kit, jsonl } => {
             workbench_coverage_command(&device, &kit, jsonl.as_deref())
         }
+        WorkbenchCommand::Replay { trace, device, kit } => {
+            workbench_replay_command(&trace, &device, &kit)
+        }
+    }
+}
+
+fn workbench_replay_command(path: &Path, device_id: &str, kit_id: &str) -> Result<(), String> {
+    let device = find_device(&repo_dir(), device_id)
+        .ok_or_else(|| format!("unknown device profile '{device_id}'"))?;
+    let kit = find_kit(&repo_dir(), &home_dir(), kit_id)
+        .ok_or_else(|| format!("unknown kit profile '{kit_id}'"))?;
+    let text = fs::read_to_string(path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let report = workbench_replay::replay_jsonl(&text, &device, &kit)?;
+    println!("polyrhythm workbench replay");
+    println!("trace: {}", path.display());
+    println!("device: {} ({})", device.id, device.name);
+    println!("kit: {} ({})", kit.id, kit.name);
+    println!("live audio: skipped");
+    println!("PipeWire graph probing: skipped");
+    println!("raw events: {}", report.raw_events);
+    println!("output events: {}", report.output_events);
+    for output in &report.outputs {
+        println!("out: {output:?}");
+    }
+    for warning in &report.warnings {
+        println!("warn: {warning}");
+    }
+    if report.warnings.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "workbench replay produced {} warning(s)",
+            report.warnings.len()
+        ))
     }
 }
 

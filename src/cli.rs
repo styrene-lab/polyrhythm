@@ -17,7 +17,8 @@ use crate::monitor::{
     MonitorPair, RecordingMix,
 };
 use crate::preflight::{
-    has_failures, run as run_preflight, CheckStatus, PreflightConfig, PreflightReport,
+    detect_midi_client, has_failures, run as run_preflight, CheckStatus, PreflightConfig,
+    PreflightReport,
 };
 use crate::process::{pid_statuses, stop, ProcessState, StopOptions};
 use crate::profiles::{
@@ -33,6 +34,7 @@ use crate::start::{
 };
 use crate::td50_mapper::{mapped_notes_from_midimap, DRS_EMITTED_NOTES};
 use crate::trace::{tail as trace_tail, trace_path, write_event, TraceEvent};
+use crate::virtual_midi::{self, VirtualMidiConfig, VirtualMidiStatus};
 use crate::workbench::coverage as workbench_coverage;
 use crate::workbench::replay as workbench_replay;
 use crate::workbench::trace as workbench_trace;
@@ -245,6 +247,22 @@ enum Command {
         restart_spotify: bool,
         #[arg(long, default_value_t = true)]
         restart_cosmic_panel: bool,
+    },
+
+    /// Start only the normalized mapper virtual MIDI output for DAW/Ardour recording.
+    VirtualMidi {
+        #[arg(long, default_value_t = true, conflicts_with = "execute")]
+        dry_run: bool,
+        #[arg(long)]
+        execute: bool,
+        #[arg(long, default_value = DEFAULT_MIDI_DEVICE)]
+        midi_device: String,
+        #[arg(long, default_value_t = 0)]
+        midi_port: u8,
+        #[arg(long, default_value = DEFAULT_MAPPER_CLIENT)]
+        output_client: String,
+        #[arg(long, default_value = DEFAULT_MAPPER_PORT)]
+        output_port: String,
     },
 
     /// List built-in device profiles.
@@ -521,6 +539,21 @@ fn run_result(cli: Cli) -> Result<(), String> {
             &volume,
             restart_spotify,
             restart_cosmic_panel,
+        ),
+        Command::VirtualMidi {
+            dry_run,
+            execute,
+            midi_device,
+            midi_port,
+            output_client,
+            output_port,
+        } => virtual_midi_command(
+            dry_run,
+            execute,
+            &midi_device,
+            midi_port,
+            &output_client,
+            &output_port,
         ),
         Command::Devices => devices(),
         Command::Kits => kits(),
@@ -1253,6 +1286,74 @@ fn command_exists(command: &str) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+fn virtual_midi_command(
+    dry_run: bool,
+    execute: bool,
+    midi_device: &str,
+    midi_port: u8,
+    output_client: &str,
+    output_port: &str,
+) -> Result<(), String> {
+    let live = execute;
+    if !dry_run && !live {
+        return Err("use --dry-run or --execute".to_string());
+    }
+    let midi_client = detect_midi_client(midi_device, std::time::Duration::from_secs(2))
+        .ok_or_else(|| format!("{midi_device} not visible via bounded aconnect"))?;
+    let mut start_config = StartConfig::drs_default(home_dir(), repo_dir());
+    start_config.midi_client = Some(midi_client);
+    start_config.midi_port = midi_port;
+    let config = VirtualMidiConfig {
+        cache_dir: cache_dir(),
+        midi_client,
+        midi_port,
+        mapper_bin: start_config.mapper_bin,
+        velocity_curve: start_config.velocity_curve,
+        client_name: output_client.to_string(),
+        port_name: output_port.to_string(),
+    };
+    let ops = virtual_midi::plan(&config);
+    let plan_path = cache_dir().join("virtual-midi-plan.json");
+    virtual_midi::write_plan(&plan_path, &config, &ops)
+        .map_err(|err| format!("failed to write virtual MIDI plan: {err}"))?;
+    println!(
+        "polyrhythm virtual-midi {}",
+        if live { "execute" } else { "dry-run" }
+    );
+    println!("midi device: {midi_device}");
+    println!("midi source: {midi_client}:{midi_port}");
+    println!("output: {output_client}:{output_port}");
+    println!("plan: {}", plan_path.display());
+    println!("DrumGizmo: skipped");
+    println!("PipeWire audio routing: skipped");
+    for op in &ops {
+        println!("- {}", virtual_midi::describe(op));
+    }
+    if live {
+        let results = virtual_midi::execute(&config, &ops);
+        for result in &results {
+            let status = match &result.status {
+                VirtualMidiStatus::Ok => "ok".to_string(),
+                VirtualMidiStatus::Failed(reason) => format!("failed: {reason}"),
+                VirtualMidiStatus::Skipped(reason) => format!("skipped: {reason}"),
+            };
+            println!("{status}: {}", result.description);
+        }
+        let failed = results
+            .iter()
+            .any(|result| result.required && matches!(result.status, VirtualMidiStatus::Failed(_)));
+        if failed {
+            Err("virtual MIDI start had failures".to_string())
+        } else {
+            println!("Ardour: create a MIDI track and select input {output_client}:{output_port}");
+            Ok(())
+        }
+    } else {
+        println!("live mapper start: skipped");
+        Ok(())
+    }
 }
 
 fn devices() -> Result<(), String> {

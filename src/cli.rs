@@ -1399,20 +1399,39 @@ fn workbench_replay_command(path: &Path, device_id: &str, kit_id: &str) -> Resul
     println!("live audio: skipped");
     println!("PipeWire graph probing: skipped");
     println!("raw events: {}", report.raw_events);
+    println!("expected outputs: {}", report.expected_outputs);
     println!("output events: {}", report.output_events);
     for output in &report.outputs {
         println!("out: {output:?}");
     }
+    for mismatch in &report.mismatches {
+        println!(
+            "mismatch[{}]: expected {:?} actual {:?}",
+            mismatch.index, mismatch.expected, mismatch.actual
+        );
+    }
     for warning in &report.warnings {
         println!("warn: {warning}");
     }
-    if report.warnings.is_empty() {
-        Ok(())
+    if report.expected_outputs > 0 && report.mismatches.is_empty() {
+        println!("regression: ok");
+    } else if report.expected_outputs > 0 {
+        println!("regression: failed");
     } else {
+        println!("regression: unchecked");
+    }
+    if !report.warnings.is_empty() {
         Err(format!(
             "workbench replay produced {} warning(s)",
             report.warnings.len()
         ))
+    } else if !report.mismatches.is_empty() {
+        Err(format!(
+            "workbench replay found {} mismatch(es)",
+            report.mismatches.len()
+        ))
+    } else {
+        Ok(())
     }
 }
 

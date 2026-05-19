@@ -5,8 +5,8 @@ use std::path::Path;
 use crate::profiles::Intent;
 use crate::workbench::coverage::CoverageReport;
 use crate::workbench::event::{
-    CanonicalMatched, MappingQuality, RawMidiEvent, RawObserved, TargetResolved, WorkbenchEvent,
-    WorkbenchWarning,
+    CanonicalMatched, ExpectedOutput, MappingQuality, RawMidiEvent, RawObserved, TargetResolved,
+    WorkbenchEvent, WorkbenchWarning,
 };
 
 pub fn append_event(path: &Path, event: &WorkbenchEvent) -> io::Result<()> {
@@ -52,6 +52,7 @@ pub fn encode_event(event: &WorkbenchEvent) -> String {
         WorkbenchEvent::RawObserved(raw) => encode_raw_observed(raw),
         WorkbenchEvent::CanonicalMatched(matched) => encode_canonical_matched(matched),
         WorkbenchEvent::TargetResolved(resolved) => encode_target_resolved(resolved),
+        WorkbenchEvent::ExpectOutput(expected) => encode_expected_output(expected),
         WorkbenchEvent::Warning(warning) => format!(
             "{{\"type\":\"warning\",\"message\":\"{}\"}}",
             escape_json(&warning.message)
@@ -75,6 +76,7 @@ pub fn decode_event(line: &str) -> Result<WorkbenchEvent, String> {
         Some("raw_observed") => decode_raw_observed(line),
         Some("target_resolved") => decode_target_resolved(line),
         Some("canonical_matched") => decode_canonical_matched(line),
+        Some("expect_output") => decode_expected_output(line),
         Some("warning") => Ok(WorkbenchEvent::Warning(WorkbenchWarning {
             message: string_field(line, "message").unwrap_or_default(),
         })),
@@ -144,6 +146,13 @@ fn encode_canonical_matched(matched: &CanonicalMatched) -> String {
     )
 }
 
+fn encode_expected_output(expected: &ExpectedOutput) -> String {
+    format!(
+        "{{\"type\":\"expect_output\",\"event\":{}}}",
+        encode_raw_midi_event(&expected.event)
+    )
+}
+
 fn encode_target_resolved(resolved: &TargetResolved) -> String {
     format!(
         "{{\"type\":\"target_resolved\",\"intent\":\"{}\",\"note\":{},\"instrument\":\"{}\",\"quality\":\"{}\"}}",
@@ -159,6 +168,14 @@ fn quality_str(quality: MappingQuality) -> &'static str {
 }
 
 fn decode_raw_observed(line: &str) -> Result<WorkbenchEvent, String> {
+    Ok(WorkbenchEvent::RawObserved(RawObserved {
+        time_millis: number_field_u128(line, "time_millis")?,
+        source: nullable_string_field(line, "source"),
+        event: decode_raw_midi_event(line)?,
+    }))
+}
+
+fn decode_raw_midi_event(line: &str) -> Result<RawMidiEvent, String> {
     let event_object = object_field(line, "event")?;
     let kind =
         string_field(&event_object, "kind").ok_or_else(|| "raw event missing kind".to_string())?;
@@ -186,11 +203,7 @@ fn decode_raw_observed(line: &str) -> Result<WorkbenchEvent, String> {
         "other" => RawMidiEvent::Other,
         other => return Err(format!("unsupported raw MIDI event kind '{other}'")),
     };
-    Ok(WorkbenchEvent::RawObserved(RawObserved {
-        time_millis: number_field_u128(line, "time_millis")?,
-        source: nullable_string_field(line, "source"),
-        event,
-    }))
+    Ok(event)
 }
 
 fn decode_target_resolved(line: &str) -> Result<WorkbenchEvent, String> {
@@ -214,6 +227,12 @@ fn decode_canonical_matched(line: &str) -> Result<WorkbenchEvent, String> {
                 .ok_or_else(|| "canonical match missing intent".to_string())?,
         )?,
         evidence: Vec::new(),
+    }))
+}
+
+fn decode_expected_output(line: &str) -> Result<WorkbenchEvent, String> {
+    Ok(WorkbenchEvent::ExpectOutput(ExpectedOutput {
+        event: decode_raw_midi_event(line)?,
     }))
 }
 
@@ -427,10 +446,11 @@ mod tests {
     fn decodes_raw_note_and_target_events() {
         let jsonl = concat!(
             "{\"type\":\"raw_observed\",\"time_millis\":42,\"source\":\"TD-50\",\"event\":{\"kind\":\"note_on\",\"channel\":10,\"note\":52,\"velocity\":104}}\n",
-            "{\"type\":\"target_resolved\",\"intent\":\"crash.2.edge\",\"note\":52,\"instrument\":\"China \\\"R\\\"\",\"quality\":\"fallback\"}\n"
+            "{\"type\":\"target_resolved\",\"intent\":\"crash.2.edge\",\"note\":52,\"instrument\":\"China \\\"R\\\"\",\"quality\":\"fallback\"}\n",
+            "{\"type\":\"expect_output\",\"event\":{\"kind\":\"note_on\",\"channel\":10,\"note\":52,\"velocity\":104}}\n"
         );
         let events = decode_events(jsonl).unwrap();
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 3);
         assert!(matches!(events[0], WorkbenchEvent::RawObserved(_)));
         assert_eq!(
             events[1],
@@ -441,5 +461,6 @@ mod tests {
                 quality: MappingQuality::Fallback,
             })
         );
+        assert!(matches!(events[2], WorkbenchEvent::ExpectOutput(_)));
     }
 }

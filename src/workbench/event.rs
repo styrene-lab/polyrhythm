@@ -5,6 +5,7 @@ pub enum WorkbenchEvent {
     RawObserved(RawObserved),
     CanonicalMatched(CanonicalMatched),
     TargetResolved(TargetResolved),
+    ExpectOutput(ExpectedOutput),
     Warning(WorkbenchWarning),
 }
 
@@ -52,6 +53,11 @@ pub struct TargetResolved {
     pub note: u8,
     pub instrument: String,
     pub quality: MappingQuality,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpectedOutput {
+    pub event: RawMidiEvent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

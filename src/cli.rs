@@ -33,6 +33,7 @@ use crate::start::{
 };
 use crate::td50_mapper::{mapped_notes_from_midimap, DRS_EMITTED_NOTES};
 use crate::trace::{tail as trace_tail, trace_path, write_event, TraceEvent};
+use crate::workbench::coverage as workbench_coverage;
 
 const DEFAULT_CACHE: &str = ".cache/td50";
 const DEFAULT_MONITOR_SINK: &str = "alsa_output.pci-0000_0e_00.4.analog-stereo";
@@ -274,8 +275,25 @@ enum Command {
         kit: String,
     },
 
+    /// Inspect the workbench/profile-builder backend state without touching live audio.
+    Workbench {
+        #[command(subcommand)]
+        command: WorkbenchCommand,
+    },
+
     /// Print the current safety policy encoded by the CLI.
     Policy,
+}
+
+#[derive(Debug, Subcommand)]
+enum WorkbenchCommand {
+    /// Report static coverage between a device profile and kit profile.
+    Coverage {
+        #[arg(long, default_value = "td50")]
+        device: String,
+        #[arg(long, default_value = "crocell")]
+        kit: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -496,6 +514,7 @@ fn run_result(cli: Cli) -> Result<(), String> {
         Command::GenerateMidimap { device, kit } => generate_midimap_command(&device, &kit),
         Command::MapCheck { device, kit } => map_check(&device, &kit),
         Command::ProfileInspect { device, kit } => profile_inspect(&device, &kit),
+        Command::Workbench { command } => workbench(command),
         Command::Policy => policy(),
     }
 }
@@ -1339,6 +1358,68 @@ fn profile_inspect(device_id: &str, kit_id: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn workbench(command: WorkbenchCommand) -> Result<(), String> {
+    match command {
+        WorkbenchCommand::Coverage { device, kit } => workbench_coverage_command(&device, &kit),
+    }
+}
+
+fn workbench_coverage_command(device_id: &str, kit_id: &str) -> Result<(), String> {
+    let device = find_device(&repo_dir(), device_id)
+        .ok_or_else(|| format!("unknown device profile '{device_id}'"))?;
+    let kit = find_kit(&repo_dir(), &home_dir(), kit_id)
+        .ok_or_else(|| format!("unknown kit profile '{kit_id}'"))?;
+    let report = workbench_coverage::report(&device, &kit);
+    println!("polyrhythm workbench coverage");
+    println!("device: {} ({})", device.id, device.name);
+    println!("kit: {} ({})", kit.id, kit.name);
+    println!("live audio: skipped");
+    println!("PipeWire graph probing: skipped");
+    println!("intent\tinput\tdevice_notes\ttarget\tquality");
+    for row in &report.rows {
+        let notes = row
+            .device_notes
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let target = match (row.target_note, row.instrument.as_deref()) {
+            (Some(note), Some(instrument)) => format!("note {note} instr {instrument}"),
+            _ => "unsupported".to_string(),
+        };
+        println!(
+            "{}\t{}\t[{}]\t{}\t{}",
+            row.intent,
+            row.input_id,
+            notes,
+            target,
+            row.quality.as_str()
+        );
+    }
+    let unsupported = report
+        .rows
+        .iter()
+        .filter(|row| row.quality == crate::workbench::event::MappingQuality::Unsupported)
+        .count();
+    let fallback = report
+        .rows
+        .iter()
+        .filter(|row| row.quality == crate::workbench::event::MappingQuality::Fallback)
+        .count();
+    println!(
+        "summary: rows={} fallback={} unsupported={unsupported}",
+        report.rows.len(),
+        fallback
+    );
+    if unsupported == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "workbench coverage found {unsupported} unsupported intent(s)"
+        ))
+    }
 }
 
 fn policy() -> Result<(), String> {

@@ -9,3 +9,4 @@ pub mod recovery;
 pub mod start;
 pub mod td50_mapper;
 pub mod trace;
+pub mod workbench;

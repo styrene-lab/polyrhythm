@@ -23,5 +23,5 @@ device td50 {
   input crash1_edge { intent crash.1.edge notes [55, 81] }
   input crash1_choke { intent crash.1.choke notes [56] }
   input crash2 { intent crash.2.bow notes [57] }
-  input crash2_choke { intent crash.2.choke notes [75] }
+  input crash2_edge { intent crash.2.edge notes [52] }
 }

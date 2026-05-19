@@ -25,5 +25,5 @@ kit crocell {
   map crash.1.edge note 49 instr CrashL fallback
   map crash.1.choke note 56 instr CrashLStopped
   map crash.2.bow note 57 instr CrashR
-  map crash.2.choke note 75 instr CrashRStopped
+  map crash.2.edge note 52 instr ChinaR fallback
 }

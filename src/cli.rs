@@ -34,6 +34,7 @@ use crate::start::{
 use crate::td50_mapper::{mapped_notes_from_midimap, DRS_EMITTED_NOTES};
 use crate::trace::{tail as trace_tail, trace_path, write_event, TraceEvent};
 use crate::workbench::coverage as workbench_coverage;
+use crate::workbench::trace as workbench_trace;
 
 const DEFAULT_CACHE: &str = ".cache/td50";
 const DEFAULT_MONITOR_SINK: &str = "alsa_output.pci-0000_0e_00.4.analog-stereo";
@@ -293,6 +294,8 @@ enum WorkbenchCommand {
         device: String,
         #[arg(long, default_value = "crocell")]
         kit: String,
+        #[arg(long)]
+        jsonl: Option<PathBuf>,
     },
 }
 
@@ -1362,11 +1365,17 @@ fn profile_inspect(device_id: &str, kit_id: &str) -> Result<(), String> {
 
 fn workbench(command: WorkbenchCommand) -> Result<(), String> {
     match command {
-        WorkbenchCommand::Coverage { device, kit } => workbench_coverage_command(&device, &kit),
+        WorkbenchCommand::Coverage { device, kit, jsonl } => {
+            workbench_coverage_command(&device, &kit, jsonl.as_deref())
+        }
     }
 }
 
-fn workbench_coverage_command(device_id: &str, kit_id: &str) -> Result<(), String> {
+fn workbench_coverage_command(
+    device_id: &str,
+    kit_id: &str,
+    jsonl: Option<&Path>,
+) -> Result<(), String> {
     let device = find_device(&repo_dir(), device_id)
         .ok_or_else(|| format!("unknown device profile '{device_id}'"))?;
     let kit = find_kit(&repo_dir(), &home_dir(), kit_id)
@@ -1413,6 +1422,11 @@ fn workbench_coverage_command(device_id: &str, kit_id: &str) -> Result<(), Strin
         report.rows.len(),
         fallback
     );
+    if let Some(path) = jsonl {
+        workbench_trace::append_coverage(path, &report)
+            .map_err(|err| format!("failed to write workbench JSONL trace: {err}"))?;
+        println!("jsonl: {}", path.display());
+    }
     if unsupported == 0 {
         Ok(())
     } else {

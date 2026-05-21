@@ -130,11 +130,15 @@ fn run() -> Result<(), String> {
     check(unsafe { snd_seq_open(&mut seq, cstr("default")?.as_ptr(), SND_SEQ_OPEN_DUPLEX, 0) })?;
     let _guard = SeqGuard(seq);
 
-    check(unsafe { snd_seq_set_client_name(seq, cstr("TD50-DrumGizmo-Hihat-Mapper")?.as_ptr()) })?;
+    let client_name = env::var("POLYRHYTHM_MIDI_CLIENT_NAME")
+        .unwrap_or_else(|_| "TD50-DrumGizmo-Hihat-Mapper".to_string());
+    let port_name = env::var("POLYRHYTHM_MIDI_PORT_NAME").unwrap_or_else(|_| "out".to_string());
+
+    check(unsafe { snd_seq_set_client_name(seq, cstr(&client_name)?.as_ptr()) })?;
     let port = unsafe {
         snd_seq_create_simple_port(
             seq,
-            cstr("out")?.as_ptr(),
+            cstr(&port_name)?.as_ptr(),
             SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ | SND_SEQ_PORT_CAP_WRITE,
             SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION,
         )
@@ -144,7 +148,7 @@ fn run() -> Result<(), String> {
 
     let velocity_curve = VelocityCurve::from_env();
     eprintln!(
-        "TD50-DrumGizmo-Hihat-Mapper-rs from {in_client}:{in_port}. CC4 bands: open <32, semi 32..71, closed >=72. Velocity curve: {}.",
+        "{client_name} from {in_client}:{in_port} to port {port_name}. CC4 bands: open <32, semi 32..71, closed >=72. Velocity curve: {}.",
         velocity_curve.name()
     );
 

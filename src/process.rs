@@ -36,6 +36,7 @@ pub const PROCESS_NAMES: &[&str] = &[
     "drumgizmo",
     "td50-midi-filter",
     "td50-drumgizmo-hihat-mapper",
+    "td50-drumgizmo-hihat-mapper-rs",
     "pw-link",
 ];
 

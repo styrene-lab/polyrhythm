@@ -145,6 +145,8 @@ pub fn is_required(op: &VirtualMidiOp) -> bool {
 fn mapper_command(config: &VirtualMidiConfig) -> Vec<String> {
     vec![
         format!("TD50_VELOCITY_CURVE={}", config.velocity_curve),
+        format!("POLYRHYTHM_MIDI_CLIENT_NAME={}", config.client_name),
+        format!("POLYRHYTHM_MIDI_PORT_NAME={}", config.port_name),
         config.mapper_bin.display().to_string(),
         config.midi_client.to_string(),
         config.midi_port.to_string(),
@@ -158,7 +160,9 @@ fn start_process(
     wait: Duration,
 ) -> VirtualMidiStatus {
     if command.len() < 2 {
-        return VirtualMidiStatus::Failed("expected env assignment and mapper command".to_string());
+        return VirtualMidiStatus::Failed(
+            "expected env assignments and mapper command".to_string(),
+        );
     }
     let Some(parent) = log.parent() else {
         return VirtualMidiStatus::Failed("log has no parent".to_string());
@@ -179,14 +183,25 @@ fn start_process(
         Ok(file) => file,
         Err(err) => return VirtualMidiStatus::Failed(err.to_string()),
     };
-    let Some((env_key, env_value)) = command[0].split_once('=') else {
-        return VirtualMidiStatus::Failed(
-            "first mapper command item must be env assignment".to_string(),
-        );
+    let mut envs = Vec::new();
+    let mut program_index = None;
+    for (index, item) in command.iter().enumerate() {
+        if let Some((key, value)) = item.split_once('=') {
+            envs.push((key.to_string(), value.to_string()));
+        } else {
+            program_index = Some(index);
+            break;
+        }
+    }
+    let Some(program_index) = program_index else {
+        return VirtualMidiStatus::Failed("mapper command missing program".to_string());
     };
-    let child = Command::new(&command[1])
-        .args(&command[2..])
-        .env(env_key, env_value)
+    let mut child_command = Command::new(&command[program_index]);
+    child_command.args(&command[program_index + 1..]);
+    for (key, value) in envs {
+        child_command.env(key, value);
+    }
+    let child = child_command
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(stderr))

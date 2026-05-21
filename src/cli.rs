@@ -1336,6 +1336,9 @@ fn virtual_midi_command(
         for result in &results {
             let status = match &result.status {
                 VirtualMidiStatus::Ok => "ok".to_string(),
+                VirtualMidiStatus::OkWithDetails(details) => {
+                    format!("ok: {}", details.join(", "))
+                }
                 VirtualMidiStatus::Failed(reason) => format!("failed: {reason}"),
                 VirtualMidiStatus::Skipped(reason) => format!("skipped: {reason}"),
             };
@@ -1348,6 +1351,14 @@ fn virtual_midi_command(
             Err("virtual MIDI start had failures".to_string())
         } else {
             println!("Ardour: create a MIDI track and select input {output_client}:{output_port}");
+            for result in &results {
+                if let VirtualMidiStatus::OkWithDetails(details) = &result.status {
+                    println!("JACK/PipeWire MIDI bridge candidates:");
+                    for detail in details {
+                        println!("- {detail}");
+                    }
+                }
+            }
             Ok(())
         }
     } else {

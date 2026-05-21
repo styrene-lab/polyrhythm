@@ -45,6 +45,7 @@ pub struct VirtualMidiResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VirtualMidiStatus {
     Ok,
+    OkWithDetails(Vec<String>),
     Failed(String),
     Skipped(String),
 }
@@ -228,7 +229,7 @@ fn check_jack_midi_bridge(client_name: &str, timeout: Duration) -> VirtualMidiSt
             "no PipeWire/JACK MIDI bridge port found for {client_name}"
         ))
     } else {
-        VirtualMidiStatus::Ok
+        VirtualMidiStatus::OkWithDetails(candidates)
     }
 }
 

@@ -30,6 +30,9 @@ pub enum VirtualMidiOp {
         client_name: String,
         port_name: String,
     },
+    CheckJackMidiBridge {
+        client_name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +60,9 @@ pub fn plan(config: &VirtualMidiConfig) -> Vec<VirtualMidiOp> {
         VirtualMidiOp::AdvertiseOutput {
             client_name: config.client_name.clone(),
             port_name: config.port_name.clone(),
+        },
+        VirtualMidiOp::CheckJackMidiBridge {
+            client_name: config.client_name.clone(),
         },
     ]
 }
@@ -86,6 +92,9 @@ pub fn execute(config: &VirtualMidiConfig, ops: &[VirtualMidiOp]) -> Vec<Virtual
                     log,
                 } => start_process(command, pidfile, log, Duration::from_secs(1)),
                 VirtualMidiOp::AdvertiseOutput { .. } => VirtualMidiStatus::Ok,
+                VirtualMidiOp::CheckJackMidiBridge { client_name } => {
+                    check_jack_midi_bridge(client_name, Duration::from_secs(2))
+                }
             }
         };
         if is_required(op) {
@@ -119,6 +128,9 @@ pub fn describe(op: &VirtualMidiOp) -> String {
             client_name,
             port_name,
         } => format!("Ardour input: connect MIDI track to {client_name}:{port_name}"),
+        VirtualMidiOp::CheckJackMidiBridge { client_name } => {
+            format!("JACK/PipeWire MIDI bridge: expect a capture port containing {client_name}")
+        }
     }
 }
 
@@ -196,6 +208,40 @@ fn start_process(
     }
 }
 
+fn check_jack_midi_bridge(client_name: &str, timeout: Duration) -> VirtualMidiStatus {
+    let output = Command::new("timeout")
+        .arg(format!("{}s", timeout.as_secs().max(1)))
+        .arg("pw-link")
+        .arg("-io")
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(err) => return VirtualMidiStatus::Skipped(format!("pw-link unavailable: {err}")),
+    };
+    if !output.status.success() {
+        return VirtualMidiStatus::Skipped(format!("pw-link exited with {}", output.status));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let candidates = jack_midi_bridge_candidates(&stdout, client_name);
+    if candidates.is_empty() {
+        VirtualMidiStatus::Skipped(format!(
+            "no PipeWire/JACK MIDI bridge port found for {client_name}"
+        ))
+    } else {
+        VirtualMidiStatus::Ok
+    }
+}
+
+pub fn jack_midi_bridge_candidates(output: &str, client_name: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter(|line| {
+            line.contains("Midi-Bridge") && line.contains(client_name) && line.contains("(capture)")
+        })
+        .map(|line| line.trim().to_string())
+        .collect()
+}
+
 pub fn write_plan(
     path: &PathBuf,
     config: &VirtualMidiConfig,
@@ -242,11 +288,22 @@ mod tests {
             port_name: "out".to_string(),
         };
         let ops = plan(&config);
-        assert_eq!(ops.len(), 3);
+        assert_eq!(ops.len(), 4);
         let descriptions = ops.iter().map(describe).collect::<Vec<_>>().join("\n");
         assert!(descriptions.contains("start virtual MIDI mapper"));
         assert!(descriptions.contains("Ardour input"));
+        assert!(descriptions.contains("JACK/PipeWire MIDI bridge"));
         assert!(!descriptions.contains("DrumGizmo"));
-        assert!(!descriptions.contains("pw-link"));
+        assert!(!descriptions.contains("pw-link "));
+    }
+
+    #[test]
+    fn finds_pipewire_midi_bridge_capture_for_mapper() {
+        let output = "Midi-Bridge:U2MIDI Pro MIDI 1 (capture)\nMidi-Bridge:Polyrhythm Canonical Outout (capture)\nMidi-Bridge:Polyrhythm Canonical Outout (playback)\n";
+        let candidates = jack_midi_bridge_candidates(output, "Polyrhythm Canonical Out");
+        assert_eq!(
+            candidates,
+            vec!["Midi-Bridge:Polyrhythm Canonical Outout (capture)".to_string()]
+        );
     }
 }

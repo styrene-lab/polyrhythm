@@ -265,6 +265,12 @@ enum Command {
         output_port: String,
     },
 
+    /// Diagnose Ardour-side MIDI graph visibility without mutating routes.
+    ArdourMidiDiagnose {
+        #[arg(long, default_value = DEFAULT_MAPPER_CLIENT)]
+        output_client: String,
+    },
+
     /// List built-in device profiles.
     Devices,
 
@@ -555,6 +561,7 @@ fn run_result(cli: Cli) -> Result<(), String> {
             &output_client,
             &output_port,
         ),
+        Command::ArdourMidiDiagnose { output_client } => ardour_midi_diagnose(&output_client),
         Command::Devices => devices(),
         Command::Kits => kits(),
         Command::GenerateMidimap { device, kit } => generate_midimap_command(&device, &kit),
@@ -1365,6 +1372,154 @@ fn virtual_midi_command(
         println!("live mapper start: skipped");
         Ok(())
     }
+}
+
+fn ardour_midi_diagnose(output_client: &str) -> Result<(), String> {
+    println!("polyrhythm ardour-midi-diagnose");
+    println!("mutation: none");
+    let ardour_pids = process_ids_matching("ardour");
+    if ardour_pids.is_empty() {
+        println!("Ardour: not running");
+    } else {
+        println!("Ardour pids: {}", join_u32(&ardour_pids));
+        for pid in &ardour_pids {
+            println!(
+                "Ardour pid {pid} backend hint: {}",
+                ardour_backend_hint(*pid)
+            );
+        }
+    }
+
+    let pw_ports = bounded_pw_link_io(std::time::Duration::from_secs(5));
+    match &pw_ports {
+        Ok(lines) => {
+            let bridge_candidates =
+                virtual_midi::jack_midi_bridge_candidates(&lines.join("\n"), output_client);
+            if bridge_candidates.is_empty() {
+                println!("Polyrhythm JACK/PipeWire source: missing for {output_client}");
+            } else {
+                println!("Polyrhythm JACK/PipeWire source candidates:");
+                for candidate in &bridge_candidates {
+                    println!("- {candidate}");
+                }
+            }
+            let ardour_ports = lines
+                .iter()
+                .filter(|line| line.to_ascii_lowercase().contains("ardour"))
+                .cloned()
+                .collect::<Vec<_>>();
+            if ardour_ports.is_empty() {
+                println!("Ardour JACK/PipeWire ports: none visible");
+            } else {
+                println!("Ardour JACK/PipeWire ports:");
+                for port in &ardour_ports {
+                    println!("- {port}");
+                }
+            }
+            if !bridge_candidates.is_empty() && !ardour_ports.is_empty() {
+                println!("Expected edge: Polyrhythm bridge candidate -> Ardour MIDI input port");
+                println!("Next action: inspect Ardour MIDI track input names before enabling auto-connect.");
+            } else if !bridge_candidates.is_empty() {
+                println!("Next action: start Ardour with JACK/PipeWire backend or use ALSA sequencer input {output_client}:out.");
+            } else {
+                println!("Next action: run polyrhythm virtual-midi --execute before diagnosing Ardour graph input.");
+            }
+        }
+        Err(reason) => {
+            println!("PipeWire/JACK MIDI ports: skipped: {reason}");
+            println!("Next action: use ALSA sequencer input {output_client}:out if Ardour is on ALSA backend.");
+        }
+    }
+    Ok(())
+}
+
+fn process_ids_matching(needle: &str) -> Vec<u32> {
+    let output = std::process::Command::new("pgrep")
+        .arg("-fi")
+        .arg(needle)
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .filter(|pid| {
+            std::fs::read_to_string(format!("/proc/{pid}/cmdline"))
+                .map(|cmdline| cmdline.to_ascii_lowercase().contains("ardour"))
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
+fn ardour_backend_hint(pid: u32) -> String {
+    let fd_dir = format!("/proc/{pid}/fd");
+    let Ok(entries) = std::fs::read_dir(fd_dir) else {
+        return "unknown; cannot read process fd table".to_string();
+    };
+    let mut has_snd_seq = false;
+    let mut has_snd_pcm = false;
+    let mut has_pipewire = false;
+    for entry in entries.flatten() {
+        let Ok(target) = std::fs::read_link(entry.path()) else {
+            continue;
+        };
+        let target = target.to_string_lossy();
+        if target.contains("/dev/snd/seq") {
+            has_snd_seq = true;
+        }
+        if target.contains("/dev/snd/pcm") {
+            has_snd_pcm = true;
+        }
+        if target.contains("pipewire") || target.contains("jack") {
+            has_pipewire = true;
+        }
+    }
+    match (has_snd_seq, has_snd_pcm, has_pipewire) {
+        (true, true, false) => {
+            "ALSA backend likely; use ALSA sequencer input if mapper is not in JACK graph"
+                .to_string()
+        }
+        (_, _, true) => {
+            "JACK/PipeWire backend likely; inspect Ardour JACK/PipeWire ports".to_string()
+        }
+        (true, false, false) => "ALSA sequencer MIDI visible; audio backend unclear".to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
+fn bounded_pw_link_io(timeout: std::time::Duration) -> Result<Vec<String>, String> {
+    let output = std::process::Command::new("timeout")
+        .arg(format!("{}s", timeout.as_secs().max(1)))
+        .arg("pw-link")
+        .arg("-io")
+        .output()
+        .map_err(|err| format!("pw-link unavailable: {err}"))?;
+    if !output.status.success() {
+        return Err(format!("pw-link exited with {}", output.status));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| {
+            let lower = line.to_ascii_lowercase();
+            lower.contains("midi")
+                || lower.contains("ardour")
+                || lower.contains("polyrhythm")
+                || lower.contains("mapper")
+        })
+        .collect())
+}
+
+fn join_u32(values: &[u32]) -> String {
+    values
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn devices() -> Result<(), String> {

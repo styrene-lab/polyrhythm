@@ -268,15 +268,36 @@ recorded Ardour notes match replay expectations
 
 ### Milestone 3: Ardour normalized MIDI recording
 
+Known-good first project setup from live JACK/PipeWire validation:
+
+```text
+Backend: JACK/PipeWire
+Sample rate: 48000 Hz
+Buffer size: 64 frames
+Master bus channels: 2
+Monitor section: off
+Autoconnect inputs: Automatic
+Autoconnect outputs: Automatic to master bus
+```
+
 In Ardour:
 
 ```text
 create MIDI track
-input = Polyrhythm Canonical Out
+input = external/Polyrhythm Canonical Out
 record-enable track
 record short take
 inspect piano-roll/event list
 ```
+
+The successful live graph edge looks like:
+
+```text
+Midi-Bridge:Polyrhythm Canonical Outout (capture)
+  -> ardour:TD50 Test/midi_in 1
+```
+
+Keep the Ardour track connected to the Polyrhythm input only. Do not also connect the raw `U2MIDI Pro MIDI 1` bridge to the same track, or the take may contain both raw TD-50 events and normalized Polyrhythm events.
 
 Expected result:
 

@@ -1416,13 +1416,33 @@ fn ardour_midi_diagnose(output_client: &str) -> Result<(), String> {
                     println!("- {port}");
                 }
             }
-            if !bridge_candidates.is_empty() && !ardour_ports.is_empty() {
-                println!("Expected edge: Polyrhythm bridge candidate -> Ardour MIDI input port");
-                println!("Next action: inspect Ardour MIDI track input names before enabling auto-connect.");
-            } else if !bridge_candidates.is_empty() {
-                println!("Next action: start Ardour with JACK/PipeWire backend or use ALSA sequencer input {output_client}:out.");
-            } else {
+            let pw_links = bounded_pw_link_links(std::time::Duration::from_secs(5));
+            match (&bridge_candidates.is_empty(), &pw_links) {
+                (false, Ok(lines)) => {
+                    let edges = ardour_midi_input_edges(lines, &bridge_candidates);
+                    if edges.is_empty() {
+                        println!("Expected edge: Polyrhythm bridge candidate -> Ardour MIDI input port");
+                        println!("Confirmed edge: missing");
+                        println!("Next action: connect Ardour MIDI track input to {output_client}, then arm the track and test pad activity.");
+                    } else {
+                        println!("Confirmed Polyrhythm -> Ardour MIDI input edge:");
+                        for edge in &edges {
+                            println!("- {} -> {}", edge.source, edge.target);
+                        }
+                        println!("Next action: record a short MIDI take and verify events appear in Ardour.");
+                    }
+                }
+                (false, Err(reason)) => {
+                    println!("Expected edge: Polyrhythm bridge candidate -> Ardour MIDI input port");
+                    println!("Confirmed edge: skipped: {reason}");
+                    println!("Next action: inspect Ardour MIDI track input names before enabling auto-connect.");
+                }
+                _ => {}
+            }
+            if bridge_candidates.is_empty() {
                 println!("Next action: run polyrhythm virtual-midi --execute before diagnosing Ardour graph input.");
+            } else if ardour_ports.is_empty() {
+                println!("Next action: start Ardour with JACK/PipeWire backend or use ALSA sequencer input {output_client}:out.");
             }
         }
         Err(reason) => {
@@ -1492,10 +1512,35 @@ fn ardour_backend_hint(pid: u32) -> String {
 }
 
 fn bounded_pw_link_io(timeout: std::time::Duration) -> Result<Vec<String>, String> {
-    let output = std::process::Command::new("timeout")
-        .arg(format!("{}s", timeout.as_secs().max(1)))
-        .arg("pw-link")
-        .arg("-io")
+    bounded_pw_link(["-io"], timeout).map(|lines| {
+        lines
+            .into_iter()
+            .filter(|line| {
+                let lower = line.to_ascii_lowercase();
+                lower.contains("midi")
+                    || lower.contains("ardour")
+                    || lower.contains("polyrhythm")
+                    || lower.contains("mapper")
+            })
+            .collect()
+    })
+}
+
+fn bounded_pw_link_links(timeout: std::time::Duration) -> Result<Vec<String>, String> {
+    bounded_pw_link(["-l"], timeout)
+}
+
+fn bounded_pw_link<const N: usize>(
+    args: [&str; N],
+    timeout: std::time::Duration,
+) -> Result<Vec<String>, String> {
+    let mut command = std::process::Command::new("timeout");
+    command.arg(format!("{}s", timeout.as_secs().max(1)));
+    command.arg("pw-link");
+    for arg in args {
+        command.arg(arg);
+    }
+    let output = command
         .output()
         .map_err(|err| format!("pw-link unavailable: {err}"))?;
     if !output.status.success() {
@@ -1504,14 +1549,55 @@ fn bounded_pw_link_io(timeout: std::time::Duration) -> Result<Vec<String>, Strin
     Ok(String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(|line| line.trim().to_string())
-        .filter(|line| {
-            let lower = line.to_ascii_lowercase();
-            lower.contains("midi")
-                || lower.contains("ardour")
-                || lower.contains("polyrhythm")
-                || lower.contains("mapper")
-        })
         .collect())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ArdourMidiEdge {
+    source: String,
+    target: String,
+}
+
+fn ardour_midi_input_edges(lines: &[String], bridge_candidates: &[String]) -> Vec<ArdourMidiEdge> {
+    let mut edges = Vec::new();
+    let mut current_port: Option<&str> = None;
+    for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+        if !line.starts_with("|->") && !line.starts_with("|<-") {
+            current_port = Some(line.as_str());
+            continue;
+        }
+        let Some(port) = current_port else {
+            continue;
+        };
+        if line.starts_with("|->") && bridge_candidates.iter().any(|candidate| candidate == port) {
+            let target = line.trim_start_matches("|->").trim();
+            if is_ardour_track_midi_input(target) {
+                edges.push(ArdourMidiEdge {
+                    source: port.to_string(),
+                    target: target.to_string(),
+                });
+            }
+        } else if line.starts_with("|<-") && is_ardour_track_midi_input(port) {
+            let source = line.trim_start_matches("|<-").trim();
+            if bridge_candidates.iter().any(|candidate| candidate == source) {
+                edges.push(ArdourMidiEdge {
+                    source: source.to_string(),
+                    target: port.to_string(),
+                });
+            }
+        }
+    }
+    edges.sort_by(|left, right| left.source.cmp(&right.source).then(left.target.cmp(&right.target)));
+    edges.dedup();
+    edges
+}
+
+fn is_ardour_track_midi_input(port: &str) -> bool {
+    let lower = port.to_ascii_lowercase();
+    lower.starts_with("ardour:") && lower.contains("/midi_in")
 }
 
 fn join_u32(values: &[u32]) -> String {
@@ -1834,5 +1920,41 @@ mod tests {
         let mapped = BTreeSet::from([35, 36]);
         let missing = missing_emitted_notes(&mapped);
         assert!(missing.contains(&37));
+    }
+
+    #[test]
+    fn ardour_midi_edges_detect_polyrhythm_track_input() {
+        let lines = vec![
+            "Midi-Bridge:Polyrhythm Canonical Outout (capture)".to_string(),
+            "|-> ardour:TD50 Test/midi_in 1".to_string(),
+            "ardour:TD50 Test/midi_in 1".to_string(),
+            "|<- Midi-Bridge:Polyrhythm Canonical Outout (capture)".to_string(),
+        ];
+        let candidates = vec!["Midi-Bridge:Polyrhythm Canonical Outout (capture)".to_string()];
+
+        let edges = ardour_midi_input_edges(&lines, &candidates);
+
+        assert_eq!(
+            edges,
+            vec![ArdourMidiEdge {
+                source: "Midi-Bridge:Polyrhythm Canonical Outout (capture)".to_string(),
+                target: "ardour:TD50 Test/midi_in 1".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn ardour_midi_edges_ignore_control_inputs() {
+        let lines = vec![
+            "Midi-Bridge:Polyrhythm Canonical Outout (capture)".to_string(),
+            "|-> ardour:MTC in".to_string(),
+            "|-> ardour:TD50 Test/midi_in 1".to_string(),
+        ];
+        let candidates = vec!["Midi-Bridge:Polyrhythm Canonical Outout (capture)".to_string()];
+
+        let edges = ardour_midi_input_edges(&lines, &candidates);
+
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].target, "ardour:TD50 Test/midi_in 1");
     }
 }
